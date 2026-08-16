@@ -193,7 +193,7 @@ The decisive fact is that Attachment Scanner's `bootstrap.js` is explicitly a re
 
 The Z9-fitness worry about this layout is unfounded: `strict_min_version: "6.999"` is a floor paired with `strict_max_version: "*"`, and grepping Attachment Scanner's two source files for `Components.utils.import`, `Cu.import`, `XPCOMUtils`, `Zotero.Promise`, `OS.File`, `Services.jsm`, and `nsIScriptableUnicodeConverter` returns zero hits — the shape is already ESM/Bluebird-clean.
 
-**Keep `strict_min_version: "6.999"`.** This plugin uses no Zotero-8-only API, so the Zotero 7 floor is correct and maximally compatible; narrowing to a Zotero 8 floor would cost compatibility for no gain. If a Z8-only API is later adopted, read the floor string off the Zotero 8 dev page rather than guessing it.
+**Keep `strict_min_version: "6.999"` and `strict_max_version: "*"`.** This plugin uses no Zotero-8-only API, so the Zotero 7 floor is correct and maximally compatible; narrowing to a Zotero 8 floor would cost compatibility for no gain. If a Z8-only API is later adopted, read the floor string off the Zotero 8 dev page rather than guessing it. The open ceiling is deliberate: a bounded ceiling buys nothing here and guarantees a future break that presents to the user as the plugin disappearing after a Zotero update. Both literals are established behaviourally, since `strict_min_version` appears nowhere in Zotero's own source — the check lives in the embedded Mozilla add-on manager. On a Zotero 9.0.6 profile, Attachment Scanner ships `"6.999"`/`"*"`, ZotMoov `"6.999"`/`"9.*"`, and Better BibTeX 9.0.55 `"8.0.1"`/`"10.*"`, all installed and enabled.
 
 Three corrections applied at adoption, before any feature code:
 
