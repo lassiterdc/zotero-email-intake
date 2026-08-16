@@ -1,0 +1,144 @@
+# Pre-commit hooks for zotero-email-intake.
+#
+# Install:      conda run -n agentic pre-commit install
+# Run manually: conda run -n agentic pre-commit run --all-files
+#
+# Design notes, so a later phase does not have to re-derive them:
+#
+# 1. NO AUTO-FIXERS. Every hook here fails loudly and changes nothing. The
+#    surveyed sibling repos run `ruff --fix`, which is right for a Python
+#    package and wrong here: this suite exists to SURFACE the silent-failure
+#    classes the plugin is prone to, and a hook that quietly rewrites a file
+#    is one that stops reporting them.
+#
+# 2. NO PYTHON HOOKS. Every other repo in this workspace family runs ruff.
+#    This repo contains no Python — it is JavaScript, JSON and Markdown — so
+#    ruff and its relatives are inapplicable on substrate grounds.
+#
+# 3. SELF-CONTAINED BY CONSTRUCTION. Every local hook is plain bash or plain
+#    node, reads only files in this repo, and needs no environment variable,
+#    no conda env and no sibling checkout. The agentic-workspace commit-message
+#    hook was evaluated and deliberately NOT adopted: it shells out to
+#    `conda run -n agentic` on every commit and reads vocabulary docs from
+#    $AGENTIC_WORKSPACE, which no external contributor to a published plugin
+#    would have. No sibling project repo carries it either — it is
+#    agentic-workspace-only.
+#
+# 4. THE LOCAL HOOKS ENCODE THIS PROJECT'S SILENT-FAILURE CLASSES, not style.
+#    Each of the four below promotes a Phase 0 Validation Plan item from a
+#    one-time manual check into a standing gate. They were chosen because the
+#    failure they catch produces NO error at runtime: a plugin that installs
+#    but never loads, or loads but never listens, or listens at the wrong
+#    priority and files intermittently. Each script's header states its own case.
+#
+# 5. DELIBERATELY NOT BUILT: a guard asserting the absence of chrome
+#    registration (registerChrome / aomStartup / chrome://). Phase 0 ships no
+#    chrome registration, so the guard would pass today — but the Phase 0 plan's
+#    own Risk 2 records that a Phase 1 ESM spike may reinstate it. A gate a
+#    later phase is expected to delete is not an invariant.
+#
+# 6. `language: system` WITH AN EXPLICIT INTERPRETER, not `language: script`.
+#    `language: script` execs the entry directly, so it depends on the file's
+#    executable bit surviving into whatever tree the hook runs in. That is not
+#    a safe assumption: the first commit attempt here routed through an
+#    ephemeral worktree (the commit helper's foreign-drift auto-isolation) and
+#    every local hook failed with "Executable ... is not executable", despite
+#    the index recording all seven as mode 100755. The same class of failure
+#    reaches a contributor who obtains the tree as an archive or on a
+#    filesystem that does not carry the bit. Naming `bash` or `node` explicitly
+#    removes the dependency. The sibling repos (hhemt, vault) already use this
+#    form. The scripts remain chmod +x so they are still directly runnable.
+
+# Hook types installed by `pre-commit install`. This MUST list every type any
+# hook below declares in `stages:`. A bare `pre-commit install` installs ONLY
+# the `pre-commit` type, so without this key the `pre-merge-commit` stage is
+# registered in config but never written to the hooks dir — the hooks are
+# present, appear configured, and silently never run on a merge commit. The
+# agentic-workspace config carries the same key after that gap left its
+# post-commit hooks inert since repo creation.
+default_install_hook_types: [pre-commit, pre-merge-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-merge-conflict
+        stages: [pre-commit, pre-merge-commit]
+      - id: check-added-large-files
+        # 1 MB, not agentic-workspace's 3500 KB. That limit is sized for
+        # extracted-PDF text corpora and would never fire in this repo, whose
+        # largest tracked file is bootstrap.js at ~11 KB. The built .xpi is
+        # gitignored, so no legitimate large asset is ever staged here.
+        args: [--maxkb=1024]
+
+  - repo: local
+    hooks:
+      - id: no-main-in-worktree
+        name: Block commits to main from worktree sessions
+        entry: bash scripts/hooks/no-main-in-worktree.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit, pre-merge-commit]
+
+      - id: check-worktree-paths
+        name: Block worktree-relative paths in staged JSON
+        entry: bash scripts/hooks/check-worktree-paths.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit, pre-merge-commit]
+
+      - id: check-js-syntax
+        name: node --check on staged JavaScript
+        entry: bash scripts/hooks/check-js-syntax.sh
+        language: system
+        files: \.js$
+        stages: [pre-commit, pre-merge-commit]
+
+      - id: check-json-valid
+        name: Parse staged JSON
+        entry: bash scripts/hooks/check-json-valid.sh
+        language: system
+        files: \.json$
+        stages: [pre-commit, pre-merge-commit]
+
+      - id: check-use-strict
+        name: Require "use strict"; as line 1 of JavaScript sources
+        entry: bash scripts/hooks/check-use-strict.sh
+        language: system
+        files: \.js$
+        # scripts/hooks/ holds node-run tooling, not plugin sources loaded into
+        # the Zotero sandbox; they carry the directive by their own convention
+        # but are not subject to this gate.
+        exclude: ^scripts/hooks/
+        stages: [pre-commit, pre-merge-commit]
+
+      # The two below are CROSS-FILE / WHOLE-FILE invariants. They take
+      # `pass_filenames: false` because they must read BOTH sides regardless of
+      # which side was staged — but they are `files:`-scoped rather than
+      # `always_run`, and the distinction is load-bearing.
+      #
+      # An `always_run` invariant hook makes every commit answerable for files
+      # it does not touch. That is not academic: the standard commit here is a
+      # pathspec commit, which builds a temporary index from HEAD plus the named
+      # paths, so a commit touching neither file sees HEAD's copy of both. A
+      # hooks-only commit landing before the loader work was therefore judged
+      # against the pre-repair scaffold and failed on an invariant that had not
+      # been established yet. Scoping to the subject files makes each hook fire
+      # on exactly the commits that can break it, and skip the rest.
+      - id: check-manifest-bootstrap-agreement
+        name: manifest.json and bootstrap.js agree on id and version
+        entry: node scripts/hooks/check-manifest-bootstrap-agreement.js
+        language: system
+        pass_filenames: false
+        files: ^(manifest\.json|bootstrap\.js)$
+        stages: [pre-commit, pre-merge-commit]
+
+      - id: check-notifier-priority
+        name: Item observer registers with explicit id and priority 50
+        entry: bash scripts/hooks/check-notifier-priority.sh
+        language: system
+        pass_filenames: false
+        files: ^bootstrap\.js$
+        stages: [pre-commit, pre-merge-commit]
