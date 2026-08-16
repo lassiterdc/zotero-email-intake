@@ -12,6 +12,7 @@
 const pluginName  = "Email Intake for Zotero";
 const pluginId    = "emailintake@lassiterdc.github.io";
 const version     = "0.1.0";
+const pureJS      = ["src/message.js"];                 // Zotero-free modules; evaluated before mainJS
 const mainJS      = "src/intake.js";                    // This is the actual plugin code
 const mainFTL     = "";                                 // Localization file
 const prefXHTML   = "";                                 // Document for the pref window
@@ -237,7 +238,18 @@ function uninstall() {
 async function startup({ id, version, rootURI }) {
     log("Starting up...");
     pluginObj = onStartup();
-    Services.scriptloader.loadSubScript(rootURI + mainJS);
+    // Pure modules first, mainJS last -- the order is in the expression, not in a comment.
+    // The catch is load-bearing: Zotero.Plugins._callMethod swallows a throw from startup()
+    // into a log line that names the plugin and the method but never the file that failed.
+    for (let path of pureJS.concat(mainJS)) {
+        try {
+            Services.scriptloader.loadSubScript(rootURI + path);
+        }
+        catch (e) {
+            log("failed to load " + path + ": " + e);
+            throw e;
+        }
+    }
     pluginObj._init({ id, version, rootURI });
 
     if (prefXHTML) {
