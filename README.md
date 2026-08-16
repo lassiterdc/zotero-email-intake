@@ -12,7 +12,19 @@ A Zotero 7 plugin: drag and drop an email (`.eml`/`.msg`, or a Thunderbird/Outlo
 
 ## Status
 
-Early scaffold. No functional intake logic yet — `bootstrap.js` wires the Zotero 7 bootstrap lifecycle (`startup`/`shutdown`/window hooks) and registers a placeholder preference pane.
+Loader complete, no intake behaviour yet. `bootstrap.js` is the adopted Attachment Scanner loader: it wires the Zotero bootstrap lifecycle, publishes `Zotero.EmailIntake`, and registers a single item-notifier observer at priority 50. `src/intake.js` carries a no-op `onItemChange` placeholder.
+
+## Requirements
+
+Running the plugin needs only Zotero. Working ON it needs two more tools, because the repository installs a pre-commit suite that enforces the plugin's silent-failure invariants:
+
+| Tool | Why |
+|---|---|
+| Zotero 7+ | Runtime. Developed against 9.0.6; the manifest admits `6.999` through `*`. |
+| Node.js | Three hooks shell out to `node` — `--check` syntax gating, JSON parsing, and the manifest/loader agreement check. |
+| `pre-commit` | Runs the hook suite. Install with `pre-commit install` once per clone. |
+
+Skipping the hook install does not fail loudly — it silently removes every gate. Install them before the first commit.
 
 ## Development
 
