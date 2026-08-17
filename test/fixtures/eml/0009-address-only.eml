@@ -1,0 +1,7 @@
+From: rknight@example.net
+To: Sam Roe <sroe@example.org>
+Subject: Sensor calibration log
+Date: Thu, 12 Mar 2026 07:05:00 -0400
+Message-ID: <0009.addressonly@example.net>
+
+Body text is never parsed.

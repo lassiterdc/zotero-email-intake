@@ -1,0 +1,16 @@
+{
+  "itemType": "email",
+  "subject": "Informe de caudales",
+  "date": "2026-03-05",
+  "extra": "Message-ID: <0002.nonascii@example.net>",
+  "language": "es",
+  "abstractNote": "",
+  "url": "",
+  "accessDate": "",
+  "DOI": "",
+  "rights": "",
+  "shortTitle": "",
+  "creators": [
+    { "creatorType": "author", "firstName": "José", "lastName": "Álvarez" }
+  ]
+}

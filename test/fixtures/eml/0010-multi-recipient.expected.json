@@ -1,0 +1,16 @@
+{
+  "itemType": "email",
+  "subject": "Distribution list test",
+  "date": "2026-03-13",
+  "extra": "Message-ID: <0010.multirecipient@example.org>",
+  "language": "",
+  "abstractNote": "",
+  "url": "",
+  "accessDate": "",
+  "DOI": "",
+  "rights": "",
+  "shortTitle": "",
+  "creators": [
+    { "creatorType": "author", "firstName": "Dana", "lastName": "Lee" }
+  ]
+}

@@ -1,0 +1,8 @@
+From: Notifications <no-reply@example.com>
+Reply-To: Dana Lee <dlee@example.org>
+To: Sam Roe <sroe@example.org>
+Subject: Re: Gauge outage on the lower reach
+Date: Fri, 6 Mar 2026 08:00:00 +0000
+Message-ID: <0004.replyto@example.com>
+
+Body text is never parsed.

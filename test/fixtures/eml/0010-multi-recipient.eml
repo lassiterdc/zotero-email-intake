@@ -1,0 +1,10 @@
+From: Dana Lee <dlee@example.org>
+To: a.one@example.com, b.two@example.com, c.three@example.com,
+ d.four@example.com, e.five@example.com, f.six@example.com,
+ g.seven@example.com, h.eight@example.com, i.nine@example.com,
+ j.ten@example.com, k.eleven@example.com
+Subject: Distribution list test
+Date: Fri, 13 Mar 2026 10:00:00 -0400
+Message-ID: <0010.multirecipient@example.org>
+
+Body text is never parsed.

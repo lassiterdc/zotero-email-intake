@@ -1,0 +1,8 @@
+From: =?UTF-8?Q?Jos=C3=A9_=C3=81lvarez?= <jalvarez@example.net>
+To: Sam Roe <sroe@example.org>
+Subject: Informe de caudales
+Date: Thu, 5 Mar 2026 14:02:11 +0100
+Message-ID: <0002.nonascii@example.net>
+Content-Language: es
+
+Body text is never parsed.

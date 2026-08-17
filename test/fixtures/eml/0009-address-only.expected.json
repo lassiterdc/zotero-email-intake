@@ -1,0 +1,16 @@
+{
+  "itemType": "email",
+  "subject": "Sensor calibration log",
+  "date": "2026-03-12",
+  "extra": "Message-ID: <0009.addressonly@example.net>",
+  "language": "",
+  "abstractNote": "",
+  "url": "",
+  "accessDate": "",
+  "DOI": "",
+  "rights": "",
+  "shortTitle": "",
+  "creators": [
+    { "creatorType": "author", "name": "rknight", "fieldMode": 1 }
+  ]
+}
