@@ -14,7 +14,7 @@ const pluginId    = "emailintake@lassiterdc.github.io";
 const version     = "0.1.0";
 const pureJS      = ["src/message.js"];                 // Zotero-free modules; evaluated before mainJS
 const mainJS      = "src/intake.js";                    // This is the actual plugin code
-const mainFTL     = "";                                 // Localization file
+const mainFTL     = "emailintake.ftl";                  // Localization file
 const prefXHTML   = "";                                 // Document for the pref window
 const prefJS      = "";                                 // .js file for prefXHTML
 const prefNameFTD = "";                                 // Localized title shown in Zotero's pref window
@@ -279,5 +279,11 @@ function shutdown() {
         Zotero.Notifier.unregisterObserver(pluginObj.itemNotifierID);
         pluginObj.itemNotifierID = undefined;
     }
+    // The donor dispatches every other plugin callback through this optional-hook idiom
+    // but has no shutdown member to dispatch. Without this line the observer's
+    // _shuttingDown flag has no reachable setter: removeFromWindow is the only plugin
+    // callback this path already reaches, and it is shared with onMainWindowUnload, so
+    // setting the flag there would latch on an ordinary window close.
+    if (pluginObj.shutdown) pluginObj.shutdown();
     onShutdown();
 }
