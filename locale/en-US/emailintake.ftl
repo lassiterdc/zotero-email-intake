@@ -11,7 +11,6 @@ emailintake-pref-section-diagnostics = Diagnostics
 
 emailintake-pref-enabled =
     .label = Promote dropped e-mail files automatically
-emailintake-pref-extensions = File extensions to claim:
 emailintake-pref-recipient-cap = Recipients to record as creators:
 emailintake-pref-on-parse-failure = When a message cannot be parsed:
 emailintake-pref-on-parse-failure-leave =

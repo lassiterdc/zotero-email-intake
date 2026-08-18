@@ -1,6 +1,8 @@
 # zotero-email-intake
 
-A Zotero 7 plugin: drag and drop an email (`.eml`/`.msg`, or a Thunderbird/Outlook message) onto a Zotero collection and have it automatically create the parent item and populate its metadata (sender, recipients, subject, date) without manual entry.
+A Zotero 7 plugin: drag and drop an email (`.eml`, or a `.msg` exported from Outlook) onto a Zotero collection and have it automatically create the parent item and populate its metadata without manual entry.
+
+For `.eml`, and for any `.msg` that carries the message's original internet headers, the parent item gets sender, subject and date. A `.msg` that never travelled through a mail server — internal company mail, or a message from your own Sent folder — carries no internet headers, so the item is built from the message properties instead and gets sender and subject but no date. Files above 32 MB are declined with a message rather than parsed.
 
 ## Identifiers
 

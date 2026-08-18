@@ -38,7 +38,6 @@
 // that changes the shipped default, and cannot be reset by "restore default".
 
 pref("extensions.emailintake.enabled", true);
-pref("extensions.emailintake.extensions", "eml,msg");
 pref("extensions.emailintake.onParseFailure", "leave");
 pref("extensions.emailintake.duplicateHandling", "split");
 pref("extensions.emailintake.recipientCap", 0);
