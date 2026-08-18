@@ -38,55 +38,58 @@ function logSafe(attachmentKey, errorCode) {
     Zotero.logError(new Error(`emailintake ${errorCode} ${attachmentKey}`));
 }
 
+// ===== Outcome taxonomy =====
+
+// The plain-promotion outcome. Everything else -- every code below, and every code a
+// later phase adds -- is "not a plain promotion".
+//
+// This sentinel is what lets the D2 progress predicate be written GENERICALLY, as
+// `outcome !== OUTCOME_PROMOTED`, instead of as an enumeration of the codes that exist
+// today. Phase 3b adds three duplicate outcomes to this taxonomy; an enumerated predicate
+// would silently classify each of them as plain, and a one-file withheld drop would show
+// no window at all. That failure is invisible from inside this phase, because the codes
+// it would omit do not exist yet.
+var OUTCOME_PROMOTED = 'PROMOTED';
+
+// Every non-plain outcome this phase can produce or receive. The three duplicate codes
+// are raised only by the Phase-3b path and are enumerated now so the taxonomy, the Fluent
+// strings and the summary are settled in one place rather than reopened later.
+var OUTCOME_CODES = [
+    'E_NOT_EMAIL',            // the content sniff failed
+    'E_TOO_LARGE',            // no header terminator within the 256 KB cap
+    'E_HEADER_MALFORMED',     // a required header is absent or unparseable
+    'E_DUPLICATE_ATTACHED',   // Message-ID matched, files identical, attachment reparented
+    'E_DUPLICATE_WITHHELD',   // Message-ID matched, files differ, left standalone and tagged
+    'E_COMPARE_UNAVAILABLE',  // the existing child's file could not be resolved or read
+    'E_ALREADY_PARENTED',     // skipped by the convergence guard
+    'E_SHUTDOWN',             // aborted because teardown began mid-batch
+    'E_RENAME_FAILED',        // parented correctly, but the file kept its export name
+    'E_UNEXPECTED'            // anything the per-item catch sees that is none of the above
+];
+
+// src/message.js is pure and cannot log, so it signals an abort by throwing an Error
+// whose message IS the taxonomy code. Anything else that escapes is genuinely unexpected.
+function codeFromError(e) {
+    var message = (e && e.message) || '';
+    return OUTCOME_CODES.indexOf(message) === -1 ? 'E_UNEXPECTED' : message;
+}
+
 // ===== Detection =====
 
-// Container magics that disqualify a file regardless of its extension, checked against
-// raw bytes before any decode. %PDF-, ZIP (covers .docx and friends), Compound File
-// Binary (an .msg misnamed .eml, the likeliest real misfile), gzip, ELF.
-function hasDecliningMagic(bytes) {
-    var magics = [
-        [0x25, 0x50, 0x44, 0x46, 0x2D],
-        [0x50, 0x4B, 0x03, 0x04],
-        [0xD0, 0xCF, 0x11, 0xE0],
-        [0x1F, 0x8B],
-        [0x7F, 0x45, 0x4C, 0x46]
-    ];
-    for (var i = 0; i < magics.length; i++) {
-        var magic = magics[i];
-        if (bytes.length < magic.length) continue;
-        var matched = true;
-        for (var j = 0; j < magic.length; j++) {
-            if (bytes[j] !== magic[j]) { matched = false; break; }
-        }
-        if (matched) return true;
-    }
-    return false;
-}
+// Phase 1's inline hasDecliningMagic / firstNonEmptyLineIsField / hasRecognisedField were
+// deleted here and their three call sites collapsed onto the single detect(bytes,
+// filename) in src/message.js. The architecture assigns detection to the pure module;
+// Phase 2 landed detect there, and keeping the Phase-1 duplicate alive meant two
+// implementations of one rule that could drift with no phase closing the gap.
 
-// RFC 5322 admits no preamble, so a message's first non-empty line is itself a field.
-function firstNonEmptyLineIsField(lines) {
-    for (var i = 0; i < lines.length; i++) {
-        if (lines[i].trim() === '') continue;
-        return /^[!-9;-~]+:/.test(lines[i]);
-    }
-    return false;
-}
+// Bytes read to classify a candidate. Only the leading region is needed: detect keys on
+// container magic and on the shape of the first field line.
+var SNIFF_BYTES = 4096;
 
-// `name: value` at the start of a line occurs incidentally in many binary and text
-// formats, so a recognised field name is what makes this a content decision rather than
-// a punctuation coincidence.
-function hasRecognisedField(lines) {
-    var known = ['from', 'to', 'subject', 'date', 'message-id',
-                 'received', 'return-path', 'mime-version'];
-    var limit = Math.min(lines.length, 10);
-    for (var i = 0; i < limit; i++) {
-        var colon = lines[i].indexOf(':');
-        if (colon <= 0) continue;
-        var name = lines[i].slice(0, colon).trim().toLowerCase();
-        if (known.indexOf(name) !== -1) return true;
-    }
-    return false;
-}
+// R16's cap on the header read. This bounds the RFC 5322 header region of an .eml; it is
+// deliberately NOT sized for a CFB container, which is why .msg is declined below rather
+// than promoted through the same read.
+var HEADER_READ_CAP = 262144;
 
 // Resolves the path with getFilePathAsync -- never the synchronous resolver, which skips
 // the existence check and returns a plausible path for a file that is not there.
@@ -95,26 +98,18 @@ function hasRecognisedField(lines) {
 // leading "From" to text/plain, so an .eml beginning "From:" is typed one way while one
 // beginning "Received:" falls through to the OS registry, making that field
 // machine-dependent.
-async function isEmailFile(attachment) {
-    if (!attachment.isFileAttachment()) return false;
-    if (attachment.parentItemID) return false;
+//
+// Returns 'eml', 'msg', or null. The extension is only a pre-filter inside detect; the
+// magic-byte test is what decides, so a PDF misnamed .eml comes back null.
+async function detectAttachmentKind(attachment) {
+    if (!attachment.isFileAttachment()) return null;
+    if (attachment.parentItemID) return null;
 
     var path = await attachment.getFilePathAsync();
-    if (!path) return false;
-    if (!/\.eml$/i.test(path)) return false;
+    if (!path) return null;
 
-    var bytes = await IOUtils.read(path, { maxBytes: 4096 });
-    if (hasDecliningMagic(bytes)) return false;
-
-    // A lossy decode of binary content cannot manufacture a match the byte-magic test
-    // would have caught; the header region is ASCII by construction.
-    var text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
-    var lines = text.split(/\r\n|\r|\n/);
-
-    if (!firstNonEmptyLineIsField(lines)) return false;
-    if (!hasRecognisedField(lines)) return false;
-    return true;
+    var bytes = await IOUtils.read(path, { maxBytes: SNIFF_BYTES });
+    return detect(bytes, path);
 }
 
 // ===== Promotion =====
@@ -135,8 +130,32 @@ function readRecipientCap() {
 // correct in the field pane. The cite-key field itself is never written here: pinning it
 // would disable Better BibTeX's postfix collision disambiguation and hand uniqueness to
 // this plugin, and one sender in one year is a high-collision population.
-async function promoteAttachment(attachment) {
-    const payload = mapToPayload(parseHeaders(''), readRecipientCap());
+async function promoteAttachment(attachment, kind) {
+    // .msg is RECOGNISED and declined visibly rather than promoted. The architecture's
+    // staging paragraph makes this the standing behaviour for a format the detector knows
+    // and cannot yet handle, and the read below is the reason it still applies here: R16's
+    // 262144-byte cap bounds an RFC 5322 header region, and a CFB container's directory
+    // walk needs the whole file. Promoting .msg therefore requires a second, differently
+    // sized read, which this phase does not specify.
+    if (kind === 'msg') throw new Error('E_HEADER_MALFORMED');
+
+    const path = await attachment.getFilePathAsync();
+    if (_shuttingDown) throw new Error('E_SHUTDOWN');
+    if (!path) throw new Error('E_HEADER_MALFORMED');
+
+    // R16 verbatim: one capped read, keeping the Uint8Array in hand, then one explicit
+    // decode. Zotero.File.getContentsAsync(path, 'utf-8', 262144) is the same two
+    // operations behind one call, but adopting it would change a decision the
+    // architecture states in a named paragraph, which A6 would then require recording.
+    const bytes = await IOUtils.read(path, { maxBytes: HEADER_READ_CAP });
+    if (_shuttingDown) throw new Error('E_SHUTDOWN');
+
+    const text = new TextDecoder('utf-8').decode(bytes);
+
+    // parseHeaders throws E_TOO_LARGE on a missing header terminator and
+    // E_HEADER_MALFORMED past the header-count cap. Both propagate to the per-item catch,
+    // which is the whole signalling contract -- the pure module cannot log for itself.
+    const payload = mapToPayload(parseHeaders(text), readRecipientCap());
 
     const parentItem = new Zotero.Item(payload.itemType);
     parentItem.libraryID = attachment.libraryID;
@@ -156,9 +175,9 @@ async function promoteAttachment(attachment) {
         attachment.parentID = parentItem.id;
         await attachment.save();
     });
-    if (_shuttingDown) return;
+    if (_shuttingDown) throw new Error('E_SHUTDOWN');
 
-    await renameAttachmentFromParent(attachment, parentItem);
+    return await renameAttachmentFromParent(attachment, parentItem);
 }
 
 // Runs after the transaction commits. The host will NOT auto-rename this file on its own:
@@ -178,12 +197,68 @@ async function renameAttachmentFromParent(attachment, parentItem) {
     // value is checked and the failure logged -- a throw here would abandon the batch.
     const result = await attachment.renameAttachmentFile(base + (ext ? '.' + ext : ''),
                                                         { overwrite: false, unique: true });
-    if (result !== true) { logSafe(attachment.key, 'E_RENAME_FAILED'); return; }
+    if (result !== true) { logSafe(attachment.key, 'E_RENAME_FAILED'); return 'E_RENAME_FAILED'; }
     // Synchronous and does not save, so the saveTx is required. Its first-of-type branch
     // finds no default title for any type an .eml can be, so the title falls through to
     // the filename minus extension.
     attachment.setAutoAttachmentTitle();
     await attachment.saveTx();
+    return OUTCOME_PROMOTED;
+}
+
+// ===== Batch summary (D2) =====
+
+// One window per notify, populated once at the end with counts. No progress bar and no
+// per-item update: the batch is short and a bar over a sub-second loop is noise.
+//
+// The predicate is `ids.length > 1 OR any outcome is not a plain promotion`, and the
+// second disjunct is written against the sentinel rather than against a list of codes --
+// see OUTCOME_PROMOTED for why an enumeration would silently go blind to Phase 3b's
+// outcomes.
+function summariseBatch(itemCount, outcomes) {
+    var promoted = 0;
+    var other = 0;
+    for (var i = 0; i < outcomes.length; i++) {
+        if (outcomes[i] === OUTCOME_PROMOTED) promoted++;
+        else other++;
+    }
+
+    if (itemCount <= 1 && other === 0) return;
+
+    try {
+        // Counts go through Fluent as VARIABLES, never concatenated onto the outside of
+        // the string. Concatenation is what shipped, and it was wrong twice over: the
+        // accessor passed no args so `{ $count }` rendered literally, and the number was
+        // appended as well -- so passing args without removing the concatenation would
+        // render the count twice.
+        //
+        // The third argument is the dismissal timer. Without it the window never goes
+        // away on its own: the loader constructs with closeOnClick:false, so with no
+        // timer there is no dismissal path at all and the user must remove the toast by
+        // hand. 8000 ms is Zotero's own duration for a message meant to be READ, which a
+        // batch summary is; the loader's default of 2500 ms is sized for a transient
+        // progress toast and is too short to read counts from.
+        EmailIntake.createProgressWindow(
+            EmailIntake.getLocalizedString('emailintake-progress-headline'),
+            EmailIntake.getLocalizedString('emailintake-summary-promoted', { count: promoted })
+                + ' ' + EmailIntake.getLocalizedString('emailintake-summary-skipped', { count: other }),
+            8000
+        );
+    }
+    catch (e) {
+        // A summary that cannot be drawn must never cost the batch its result.
+        logSafe('-', 'E_UNEXPECTED');
+    }
+}
+
+// One item, start to finish. Returns an outcome; never throws for a cause the taxonomy
+// names, because the caller counts what this returns.
+async function processOne(item) {
+    const kind = await detectAttachmentKind(item);
+    if (_shuttingDown) throw new Error('E_SHUTDOWN');
+    if (kind === null) return null;                    // not ours; not counted at all
+
+    return await promoteAttachment(item, kind);
 }
 
 // ===== Observer =====
@@ -200,11 +275,14 @@ EmailIntake.onItemChange = {
         // an unset pref is undefined, which is not true.
         if (EmailIntake.getPref('enabled') !== true) return;
 
+        const outcomes = [];
+
         for (let i = 0; i < ids.length; i++) {
-            // Per-item try/catch that logs and continues -- never rethrows. The
+            // Per-item try/catch that counts and continues -- never rethrows. The
             // dispatcher wraps each observer in its own catch, so a throw escaping here
             // would abandon the rest of the batch and leave the user with a partial drop
             // and no explanation.
+            let outcome = null;
             try {
                 // Resolved immediately before promoting, not all up front: every
                 // promotion awaits a file read and a transaction, so a handle taken at
@@ -212,17 +290,22 @@ EmailIntake.onItemChange = {
                 const item = Zotero.Items.get(ids[i]);
                 if (!item) continue;
 
-                const isEmail = await isEmailFile(item);
-                if (_shuttingDown) return;
-                if (!isEmail) continue;
-
-                await promoteAttachment(item);
+                outcome = await processOne(item);
                 if (_shuttingDown) return;
             }
             catch (e) {
-                logSafe(ids[i], 'E_PROMOTE_FAILED');
+                outcome = codeFromError(e);
+                logSafe(ids[i], outcome);
+                // Teardown began mid-batch. Stop, and draw no window: a progress window
+                // raised into a shutting-down window set is worse than no summary.
+                if (outcome === 'E_SHUTDOWN') return;
             }
+            // null means the item was never ours -- a PDF dropped alongside the mail.
+            // Those are not counted, or a mixed drop would always trip the predicate.
+            if (outcome !== null) outcomes.push(outcome);
         }
+
+        if (outcomes.length > 0) summariseBatch(outcomes.length, outcomes);
     }
 };
 
@@ -233,23 +316,32 @@ EmailIntake.onItemChange = {
 // drag during development.
 async function promoteSelected(ctx) {
     const items = (ctx && ctx.items) || [];
+    const outcomes = [];
     for (let i = 0; i < items.length; i++) {
+        let outcome = null;
         try {
-            if (!(await isEmailFile(items[i]))) continue;
-            if (_shuttingDown) return;
-            await promoteAttachment(items[i]);
+            outcome = await processOne(items[i]);
             if (_shuttingDown) return;
         }
         catch (e) {
-            logSafe(items[i] && items[i].key, 'E_PROMOTE_FAILED');
+            outcome = codeFromError(e);
+            logSafe(items[i] && items[i].key, outcome);
+            if (outcome === 'E_SHUTDOWN') return;
         }
+        if (outcome !== null) outcomes.push(outcome);
     }
+    if (outcomes.length > 0) summariseBatch(outcomes.length, outcomes);
 }
 
 // ===== Lifecycle =====
 
 EmailIntake.shutdown = function () {
     _shuttingDown = true;
+    // The one explicit close. Normal dismissal is the timer, but a plugin disabled while
+    // a summary is on screen would otherwise leave a toast belonging to a plugin that is
+    // no longer running, and its timer dies with the sandbox. Safe to call
+    // unconditionally now that closeProgressWindow guards on an absent window.
+    EmailIntake.closeProgressWindow();
 };
 
 EmailIntake.main = async function () {
@@ -294,15 +386,25 @@ EmailIntake.main = async function () {
 // nothing. Follows ZotMoov's wildcard._test(item) precedent: the in-app escape hatch for
 // the half that cannot be exercised outside the application.
 EmailIntake._test = async function (path) {
-    const bytes = await IOUtils.read(path, { maxBytes: 4096 });
-    const declined = hasDecliningMagic(bytes);
-    let text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
-    const lines = text.split(/\r\n|\r|\n/);
+    const sniff = await IOUtils.read(path, { maxBytes: SNIFF_BYTES });
+    const kind = detect(sniff, path);
 
-    return {
-        path: path,
-        detected: !declined && firstNonEmptyLineIsField(lines) && hasRecognisedField(lines),
-        payload: mapToPayload(parseHeaders(text), readRecipientCap())
-    };
+    // Mirrors the promoter: the same capped read, the same decode, the same parser. A
+    // throw from parseHeaders surfaces here as the taxonomy code rather than a payload,
+    // which is what makes this usable for reproducing a failing file by hand.
+    let payload = null;
+    let outcome = kind === null ? 'E_NOT_EMAIL' : OUTCOME_PROMOTED;
+    if (kind === 'msg') outcome = 'E_HEADER_MALFORMED';
+    else if (kind === 'eml') {
+        try {
+            const bytes = await IOUtils.read(path, { maxBytes: HEADER_READ_CAP });
+            payload = mapToPayload(parseHeaders(new TextDecoder('utf-8').decode(bytes)),
+                                   readRecipientCap());
+        }
+        catch (e) {
+            outcome = codeFromError(e);
+        }
+    }
+
+    return { path: path, kind: kind, outcome: outcome, payload: payload };
 };

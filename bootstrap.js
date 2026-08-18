@@ -15,9 +15,9 @@ const version     = "0.1.0";
 const pureJS      = ["src/message.js"];                 // Zotero-free modules; evaluated before mainJS
 const mainJS      = "src/intake.js";                    // This is the actual plugin code
 const mainFTL     = "emailintake.ftl";                  // Localization file
-const prefXHTML   = "";                                 // Document for the pref window
-const prefJS      = "";                                 // .js file for prefXHTML
-const prefNameFTD = "";                                 // Localized title shown in Zotero's pref window
+const prefXHTML   = "prefs.xhtml";                      // Document for the pref window
+const prefJS      = "";                                 // .js file for prefXHTML -- a PANE SCRIPT, not the defaults file; this pane needs none
+const prefNameFTD = "emailintake-pref-pane-title";      // Localized title shown in Zotero's pref window
 const prefDefName = "Email Intake";                     // Incase if no localized title is provided, use this or pluginName
 const prefHelpURL = '';                                 // Url of external help shown in Zotero's pref window
 const prefScope   = "emailintake";                      // Prefix of all entries in Zotero's global prefs.ini
@@ -48,19 +48,26 @@ var EmailIntake = {
         return Zotero.Prefs.get(`extensions.${prefScope}.${pref}`, true);
     },
 
-    getPrefDefault(pref, defaultValue) {
-        let value = Zotero.Prefs.get(`extensions.${prefScope}.${pref}`, true)?.trim();
-        if (value) return value;
-        Zotero.Prefs.set(`extensions.${prefScope}.${pref}`, defaultValue, true);
-        return defaultValue;
-    },
+    // The donor loader's getPrefDefault(pref, defaultValue) was deleted here. It was
+    // called from nowhere and was type-wrong for this plugin's pref set: its
+    // Zotero.Prefs.get(...)?.trim() guards only null and undefined, so the boolean
+    // returned for `enabled` reached .trim() and threw TypeError, and its falsy test
+    // would have overwritten a deliberate recipientCap of 0 with the default on every
+    // read. Defaults come from the platform instead -- Zotero evaluates the plugin-root
+    // prefs.js onto the default branch before startup() runs. Establishing them here
+    // would write the USER branch, which is strictly worse: indistinguishable from a
+    // deliberate user choice and immune to "restore default".
 
     setPref(pref, value) {
         return Zotero.Prefs.set(`extensions.${prefScope}.${pref}`, value, true);
     },
 
-    getLocalizedString(l10nID) {
-        return (this.localization) ? this.localization.formatValueSync(l10nID) : l10nID;
+    // `args` is optional and carries Fluent variables: formatValueSync(id, { count: n })
+    // is Zotero's own idiom for this. Without it a string declaring `{ $count }` renders
+    // the placeholder literally, which is what shipped -- the summary window showed a
+    // raw `{$count}` to the user.
+    getLocalizedString(l10nID, args) {
+        return (this.localization) ? this.localization.formatValueSync(l10nID, args) : l10nID;
     },
 
     getLocalizedStringDefault(l10nID, defaultValue) {
@@ -118,16 +125,48 @@ var EmailIntake = {
         }
     },
 
-    createProgressWindow(title, desc) {
-        this.progressWindow = new Zotero.ProgressWindow({closeOnClick: false});
+    // `closeAfterMs` is optional. When omitted the window NEVER dismisses itself, which
+    // is what shipped: the donor constructs with closeOnClick:false and never calls
+    // startCloseTimer, so the summary persisted until the user removed it by hand with
+    // right-click -> hide. Three independent reasons it stuck, all now addressed here:
+    // no timer, no click-to-close, and closeProgressWindow called from nowhere.
+    //
+    // startCloseTimer(ms) is Zotero's own dismissal idiom (progressWindow.js:245). Its
+    // default when passed a non-number is 2500 ms; Zotero itself passes 8000 for a
+    // message the user is meant to READ, which is what a batch summary is -- so callers
+    // that want a readable summary should pass a value rather than take the default.
+    // The timer requires the window to be loading or loaded, which holds after show().
+    //
+    // closeOnClick is TRUE by user ruling: clicking the toast dismisses it. The cost was
+    // put to the user and accepted rather than assumed away -- a misplaced click can
+    // destroy counts before they are read, and that is the price of immediacy. The
+    // original report asked for both routes ("did not go away automatically or on
+    // click"), so click was expected behaviour from the start.
+    //
+    // This RESTORES the platform default rather than departing from it: progressWindow.js
+    // defaults _closeOnClick to true when the option is absent, so the donor loader's
+    // explicit false was the override. The key is kept explicit anyway, so the decision
+    // is visible at the call site instead of resting on a default that could change.
+    //
+    // The two dismissal routes do not interact: _onMouseUp calls self.close() directly
+    // and touches neither the timeout id nor the close timer. Click also RESCUES the
+    // hover case -- hovering cancels the timer, so before this a cursor resting on the
+    // toast left no dismissal path short of leaving the Zotero window, which is exactly
+    // where the pointer sits after a drag-and-drop.
+    createProgressWindow(title, desc, closeAfterMs) {
+        this.progressWindow = new Zotero.ProgressWindow({closeOnClick: true});
         this.progressWindow.changeHeadline("", "headline", title); // the second is the CSS key
         this.progressWindow.show();
         if (desc !== undefined)
             this.progressWindow.addDescription(desc);
+        if (typeof closeAfterMs === 'number')
+            this.progressWindow.startCloseTimer(closeAfterMs);
     },
 
+    // Guarded: the previous form threw a TypeError when no window was open, which is why
+    // it could not safely be called from a teardown path.
     closeProgressWindow() {
-        this.progressWindow.close();
+        if (this.progressWindow) this.progressWindow.close();
         this.progressWindow = undefined;
     },
 

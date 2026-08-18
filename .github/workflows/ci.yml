@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      # Two entries, not one pin. 22 is the floor package.json declares in `engines`;
+      # 24 is the only version this suite has ever executed on. Running both is what
+      # turns `>=22` from an unverified claim into a checked one before the plugin is
+      # published -- a package whose declared support floor has never been run is the
+      # same misleading artifact as a green CI over zero tests. A 22-only failure
+      # against a green 24 is also unambiguously a version incompatibility rather than
+      # a CI setup fault, which a lone 22 pin could not distinguish.
+      #
+      # Node 20 must not be reinstated here. Glob positionals in `node --test` arrived
+      # in Node 21, and 20 and 21 are both EOL; a Node 20 runner would execute a version
+      # the manifest declares unsupported, on an invocation form that cannot work there.
+      matrix:
+        node-version: [22, 24]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      # The invariant suite runs first and the tests second -- a structural violation
+      # should fail before a slower suite runs. scripts/ci/run-tests.sh invokes the
+      # fixture generator itself, because npm fires `pretest` for `npm test` but not for
+      # `npm run ci`.
+      - run: npm run ci

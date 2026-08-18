@@ -27,6 +27,26 @@ var MONTH_NAMES = [
     'jul', 'aug', 'sep', 'oct', 'nov', 'dec'
 ];
 
+// Longest single header value that may cross this file's output boundary, in CODE
+// POINTS. 998 is the hard per-line limit RFC 5322 s2.1.1 sets, so the cap cannot
+// truncate a conforming single-line header; it is about 2.5x the longest real fixture
+// and about 200x below the pathological 200 KB single value test/redos.test.js builds.
+//
+// This is NOT a filesystem control. The path end of the chain is already defended twice
+// by the host, which truncates a title to 100 characters in its default attachment
+// rename template and re-truncates on a too-long filename error with the platform byte
+// limits built in. A cap chosen against the filesystem would duplicate that while
+// truncating a real fixture. What this bounds is what reaches the database field and
+// the cite-key generator.
+var MAX_HEADER_VALUE_CHARS = 998;
+
+// Most logical header lines one block may contain. The 256 KB bounded read already
+// implies roughly 65,000 minimal lines, so this is about a 64x tightening rather than an
+// unbounded-to-bounded change. Its purpose is to make the worst case a STATED constant
+// instead of one derived from an unrelated byte cap, so a later change to the read size
+// cannot loosen it silently. The largest real fixture carries six header lines.
+var MAX_HEADER_LINES = 1024;
+
 // Organisational-keyword set, enumerated by the Phase-2 plan rather than left to
 // implementation time, because fixtures 0004 and 0007 both assert against it and
 // 0007 exists specifically to pin its precedence over the token-count arm.
@@ -192,9 +212,22 @@ function parseHeaders(text) {
  * First occurrence of a field name wins. Later duplicates are ignored.
  */
 function readFields(text) {
-    var block = text.slice(0, findHeaderEnd(text));
-    var fields = {};
+    var end = findHeaderEnd(text);
+    // A block with no terminator is aborted rather than parsed. Before this, a truncated
+    // or body-less message had its ENTIRE content read as headers with no signal at all,
+    // which is a silent wrong answer rather than a missing bound.
+    if (end < 0) throw new Error('E_TOO_LARGE');
+
+    var block = text.slice(0, end);
+    // Null-prototype map, not `{}`. Header names are attacker-controlled and commitField
+    // writes fields[name]; on a plain object a `__proto__:` line reaches
+    // fields['__proto__'], and every later fields['subject'] read resolves through a
+    // prototype chain the message touched. A string value makes that assignment a silent
+    // no-op, so the plain-object form was safe by accident of the value type rather than
+    // by construction.
+    var fields = Object.create(null);
     var fragments = null;   // fragments of the logical line currently being built
+    var committed = 0;      // logical lines committed, NOT unique field names
     var i = 0;
     var n = block.length;
 
@@ -212,40 +245,93 @@ function readFields(text) {
                 fragments.push(' ', line.slice(k));
             }
         } else {
-            commitField(fields, fragments);
+            committed += commitField(fields, fragments);
+            if (committed > MAX_HEADER_LINES) throw new Error('E_HEADER_MALFORMED');
             fragments = line.length > 0 ? [line] : null;
         }
 
         if (nl === n) break;
         i = nl + 1;
     }
-    commitField(fields, fragments);
+    committed += commitField(fields, fragments);
+    if (committed > MAX_HEADER_LINES) throw new Error('E_HEADER_MALFORMED');
     return fields;
 }
 
+/** Returns the number of LOGICAL LINES consumed -- 0 or 1 -- not whether a field was stored. */
 function commitField(fields, fragments) {
-    if (fragments === null) return;
+    if (fragments === null) return 0;
     var line = fragments.join('');
     var colon = line.indexOf(':');
-    if (colon <= 0) return;
+    // Still a logical line even when it is not a well-formed field, and the cap counts
+    // line volume rather than accepted fields, so this returns 1 either way.
+    if (colon <= 0) return 1;
     var name = line.slice(0, colon).toLowerCase();
-    if (Object.prototype.hasOwnProperty.call(fields, name)) return;
+    if (Object.prototype.hasOwnProperty.call(fields, name)) return 1;
     fields[name] = trimLeadingWhitespace(line.slice(colon + 1));
+    return 1;
 }
 
-/** Offset of the blank line that terminates the header block, or the end of input. */
+/**
+ * Offset of the blank line that terminates the header block, or -1 when there is none.
+ *
+ * Returning -1 rather than the end of input is the behaviour change: a caller can no
+ * longer mistake "this input was entirely headers" for "this input never terminated".
+ */
 function findHeaderEnd(text) {
     var i = 0;
     var n = text.length;
     while (i < n) {
         var nl = text.indexOf('\n', i);
-        if (nl === -1) return n;
+        if (nl === -1) return -1;
         var lineEnd = nl;
         if (lineEnd > i && text.charCodeAt(lineEnd - 1) === 13) lineEnd--;
         if (lineEnd === i) return i;
         i = nl + 1;
     }
-    return n;
+    return -1;
+}
+
+/**
+ * The one sanitiser, applied at the mapper's output.
+ *
+ * Order is the whole point: values arrive here ALREADY decoded from RFC 2047, so this
+ * validates after canonicalisation rather than before it. Three hazards it removes, all
+ * live because a decoded subject reaches the cite-key and then a directory name: NUL
+ * bytes, CR and LF (header injection), and unbounded length.
+ *
+ * Truncation is by CODE POINT, never by UTF-16 unit -- slicing a string directly can cut
+ * a surrogate pair in half and emit a lone surrogate into the database.
+ */
+function sanitizeHeaderValue(value) {
+    var text = (value === null || value === undefined) ? '' : String(value);
+    var out = [];
+    var pendingSpace = false;
+    var started = false;
+
+    for (var i = 0; i < text.length; i++) {
+        var code = text.charCodeAt(i);
+
+        // Whitespace runs -- including what unfolding left behind -- collapse to one
+        // space, and a run at either end vanishes because it is never flushed.
+        if (code === 9 || code === 32) {
+            pendingSpace = started;
+            continue;
+        }
+        // C0 (NUL, CR, LF and the rest), DEL, and C1 are dropped outright.
+        if (code < 0x20 || code === 0x7F || (code >= 0x80 && code <= 0x9F)) continue;
+
+        if (pendingSpace) { out.push(' '); pendingSpace = false; }
+        // charAt yields one UTF-16 unit; both halves of a surrogate pair reach this in
+        // order and neither is a control, so pairs survive the join intact.
+        out.push(text.charAt(i));
+        started = true;
+    }
+
+    var joined = out.join('');
+    var points = Array.from(joined);
+    if (points.length <= MAX_HEADER_VALUE_CHARS) return joined;
+    return points.slice(0, MAX_HEADER_VALUE_CHARS).join('');
 }
 
 function isWhitespaceCode(code) {
@@ -543,8 +629,11 @@ function splitOnWhitespace(text) {
  * ZotMoov's `%a` would then create a directory named `Team`.
  */
 function makeCreator(creatorType, address) {
-    var display = ((address && address.name) || '').trim();
-    var email = ((address && address.email) || '').trim();
+    // Sanitised here rather than only on the subject: a creator surname reaches ZotMoov's
+    // %a and becomes a directory name by the same route a subject does, so both endpoints
+    // of the consumption chain are covered by the one routine.
+    var display = sanitizeHeaderValue((address && address.name) || '');
+    var email = sanitizeHeaderValue((address && address.email) || '');
 
     if (display.length === 0) {
         var at = email.indexOf('@');
@@ -640,14 +729,14 @@ function mapToPayload(parsed, recipientCap = 0) {
         creators.push(makeCreator('recipient', recipients[i]));
     }
 
-    var messageId = (parsed.messageId || '').trim();
+    var messageId = sanitizeHeaderValue(parsed.messageId);
 
     return {
         itemType: 'email',
-        subject: parsed.subject || '',
-        date: parsed.date || '',
+        subject: sanitizeHeaderValue(parsed.subject),
+        date: sanitizeHeaderValue(parsed.date),
         extra: messageId.length > 0 ? 'Message-ID: ' + messageId : '',
-        language: parsed.contentLanguage || '',
+        language: sanitizeHeaderValue(parsed.contentLanguage),
         abstractNote: '',
         url: '',
         accessDate: '',
