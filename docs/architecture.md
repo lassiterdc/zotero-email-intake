@@ -356,9 +356,19 @@ Ordered to retire the highest-uncertainty item first. The largest unknown is not
 
    Ordered within the phase: `parseHeaders` + EML reader + fixture corpus first — that alone meets the Definition of Done. The read-only CFB reader is a **stretch item** inside the same phase, and the per-property MAPI fallback map is optional even within the stretch — a message lacking `0x007D` never traversed SMTP, and declining it visibly is an acceptable v1 behaviour. If the CFB walk overruns, the phase closes on EML and the binary work moves out.
 3. **Phase 3 — hardening**, with both formats' failure modes in view: batch behaviour and its progress affordance, the 256 KB read cap, `sanitizeHeaderValue`, the ReDoS controls and their pathological fixtures, the error taxonomy, prefs, Fluent strings, and the CI invariant suite.
+3b. **Phase 3b — duplicate detection and resolution.** R9's three-tier duplicate ladder and R12's resolution commands land HERE rather than in Phase 3. Phase 3's Definition of Done, validation plan and heaviness estimate were authored against a scope that excludes them, and the failure modes are categorically different: hardening fails by letting something through, this fails by acting on the *wrong item*. By developer ruling the phase also absorbed `.msg` ADOPTION, which is why the format is no longer declined from this phase onward — see the amended staging note below.
 4. **Phase 4 — publish.** Release plumbing, README, `update.json` with `update_hash`, flip visibility.
 
 From Phase 1 onward the detector recognises a format it cannot yet handle and **declines it visibly** — one user-facing message — rather than silently ignoring it. Explicit non-support is a feature; a silent no-op reads as a broken plugin.
+
+**Amended in Phase 3b (A6).** That staging rule no longer reaches `.msg`, which is promoted rather than declined from Phase 3b onward. Where the container carries `PR_TRANSPORT_MESSAGE_HEADERS` the existing parser runs unchanged; where it does not — measured at 7 of 18 real files — three PT_UNICODE MAPI properties supply a reduced item: `PR_SUBJECT` (0x0037), `PR_SENDER_NAME` (0x0C1A) and `PR_SENDER_EMAIL_ADDRESS` (0x0C1F). Phase 2's note above records the per-property fallback map as optional even within its stretch; Phase 3b took it up, so that option is now exercised rather than open.
+
+Two decisions this phase settled that the staging text above does not anticipate:
+
+- **The date is deliberately omitted on the fallback path.** Every real date property is PT_SYSTIME and therefore fixed-width, living packed in `__properties_version1.0` rather than in its own stream; parsing it is scheduled post-v1 together with acquiring `[MS-OXMSG]`. `PR_CONVERSATION_INDEX` (0x0071) was considered and REJECTED even though it is stream-reachable and encodes a FILETIME: it carries the conversation's start time, so for any reply it is a different message's timestamp — a precise, plausible, wrong value wearing the name of a real field. A dateless item is an already-supported shape.
+- **The read bound is per-format at the single read site.** `HEADER_READ_CAP` stays at 262144 for `.eml` and a new `CONTAINER_READ_CAP` of 32 MB serves `.msg`, because a CFB directory walk needs the whole file while a 256 KB prefix contains any RFC 5322 header region by construction. The oversize check runs on `IOUtils.stat` BEFORE the read, so refusing a 200 MB container never allocates 200 MB, and it raises its own taxonomy code rather than reusing `E_TOO_LARGE` — that code asserts "no header terminator within the cap", a claim that cannot be made about a file which was never opened.
+
+The `Zotero.Search` tier proved usable as specified and no alternative lookup was adopted, so no design change is recorded on that account.
 
 ## Known residuals
 

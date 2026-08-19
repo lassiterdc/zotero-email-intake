@@ -125,6 +125,22 @@ function looksLikeHeaderBlock(bytes) {
 // lets one parser serve both formats.
 var PROP_TRANSPORT_HEADERS = '__substg1.0_007D001F';
 
+// The three-property fallback for a container that never traversed SMTP and therefore
+// carries no transport headers -- measured at 7 of 18 real files, concentrated in
+// internal organisation mail and the sender's own Sent items. Each is PT_UNICODE, which
+// is what the `001F` suffix encodes, so each is reachable through the same readStream
+// path the transport-header property uses.
+//
+// There is deliberately NO date property here. Every real date property is PT_SYSTIME
+// and therefore fixed-width, living packed in `__properties_version1.0` rather than in
+// its own stream; parsing it is scheduled post-v1. PR_CONVERSATION_INDEX (0x0071) was
+// considered and REJECTED even though it is stream-reachable and does encode a FILETIME:
+// it carries the conversation's start time, so for any reply it is a different message's
+// timestamp -- a precise, plausible, wrong value wearing the name of a real field.
+var PROP_SUBJECT = '__substg1.0_0037001F';
+var PROP_SENDER_NAME = '__substg1.0_0C1A001F';
+var PROP_SENDER_EMAIL = '__substg1.0_0C1F001F';
+
 /**
  * Resolve the CFB reader across both execution environments.
  *
@@ -158,16 +174,68 @@ function getStreamReader() {
  * rather than being an artifact of the fixture.
  */
 function textFromMsg(bytes) {
+    return unicodePropFromMsg(bytes, PROP_TRANSPORT_HEADERS);
+}
+
+/**
+ * Read one PT_UNICODE property stream and return its text, or null.
+ *
+ * The trailing-U+0000 trim is required on EVERY property, not just the header block.
+ * Real containers pad their streams, and the generated fixture pads each stream to the
+ * mini-stream cutoff so that it routes through the reader's regular-sector path -- so an
+ * untrimmed read yields thousands of NULs that would reach the item title, the cite key
+ * computed from it, and the filename an external filing plugin derives from the item
+ * metadata, while failing no type check anywhere along the way.
+ */
+function unicodePropFromMsg(bytes, name) {
     var reader = getStreamReader();
     if (reader === null) return null;
 
-    var raw = reader(bytes, PROP_TRANSPORT_HEADERS);
+    var raw = reader(bytes, name);
     if (raw === null || raw.length === 0) return null;
 
     var text = new TextDecoder('utf-16le').decode(raw);
     var end = text.length;
     while (end > 0 && text.charCodeAt(end - 1) === 0) end--;
     return text.slice(0, end);
+}
+
+/**
+ * One entry point for a MSG container: a ParsedMessage, or null.
+ *
+ * The coupled side calls this rather than branching on which shape the container turned
+ * out to have. Where the transport-header property is present the existing parser runs
+ * unchanged, so a `.msg` and its `.eml` twin produce the identical result. Where it is
+ * absent, three MAPI properties supply a reduced item.
+ *
+ * `date` and `messageId` are deliberately EMPTY on the fallback path rather than guessed.
+ * A message that never traversed SMTP was never assigned a Message-ID, so an absent key
+ * there is legitimate rather than malformed, and the duplicate ladder is written knowing
+ * that. A dateless item is an already-supported shape; fixture 0005-missing-date
+ * exercises it.
+ *
+ * Returns null only when neither path yields a subject or a sender, which is the honest
+ * decline -- a container this reader cannot make anything of.
+ */
+function parseMsg(bytes) {
+    var headerBlock = textFromMsg(bytes);
+    if (headerBlock !== null) return parseHeaders(headerBlock);
+
+    var subject = unicodePropFromMsg(bytes, PROP_SUBJECT) || '';
+    var senderName = unicodePropFromMsg(bytes, PROP_SENDER_NAME) || '';
+    var senderEmail = unicodePropFromMsg(bytes, PROP_SENDER_EMAIL) || '';
+
+    if (subject === '' && senderName === '' && senderEmail === '') return null;
+
+    return {
+        subject: subject,
+        from: { name: senderName, email: senderEmail },
+        to: [],
+        date: '',
+        messageId: '',
+        replyTo: null,
+        contentLanguage: ''
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -749,4 +817,4 @@ function mapToPayload(parsed, recipientCap = 0) {
 
 // Node honours this; the loadSubScript sandbox ignores it because `module` is
 // undefined there. This is what lets `node --test` load the file with no shim.
-if (typeof module !== 'undefined') { module.exports = { detect, parseHeaders, mapToPayload, textFromMsg }; }
+if (typeof module !== 'undefined') { module.exports = { detect, parseHeaders, mapToPayload, textFromMsg, parseMsg }; }
