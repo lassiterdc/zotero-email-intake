@@ -1,12 +1,18 @@
-emailintake-promote-label = Promote to E-mail item
+# The four menu LABELS carry a `Zotmail:` prefix so the plugin's entries group visually in a
+# context menu it shares with every other plugin. This is a LABEL convention and nothing
+# else: the plugin id, the manifest name, the preference pane and the README are unchanged,
+# and the prefix must NOT spread to emailintake-progress-headline, to the dialog titles, or
+# to any error string. Those already sit inside surfaces that name the plugin, and a second
+# name there reads as a second product.
+emailintake-promote-label = Zotmail: Promote to E-mail item
 emailintake-progress-headline = Email intake
 
 # The remaining three R12 commands. Tag names are deliberately NOT in this file: they are
 # identifiers rather than presentation strings and stay as literals in src/, because both
 # resolution commands are defined by a tag predicate and tags sync between machines.
-emailintake-repromote-label = Re-promote / regenerate key
-emailintake-resolve-duplicate-label = Resolve duplicate…
-emailintake-review-auto-label = Review auto-attached duplicate…
+emailintake-repromote-label = Zotmail: Re-promote / regenerate key
+emailintake-resolve-duplicate-label = Zotmail: Resolve duplicate…
+emailintake-review-auto-label = Zotmail: Review auto-attached duplicate…
 
 # Resolution dialogs. Four strings each, not two: Services.prompt.confirmEx takes a title,
 # a body and two button labels. The body is load-bearing rather than decorative -- it is

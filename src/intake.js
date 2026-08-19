@@ -423,7 +423,11 @@ function readRecipientCap() {
 // correct in the field pane. The cite-key field itself is never written here: pinning it
 // would disable Better BibTeX's postfix collision disambiguation and hand uniqueness to
 // this plugin, and one sender in one year is a high-collision population.
-async function promoteAttachment(attachment, kind, batchMap) {
+// `options.skipDuplicateGate` is the resolution commands' opt-out and nothing else's. The
+// polarity is opt-OUT rather than opt-in deliberately: a future call site that omits the
+// argument is GATED, and a lost gate on the drop path re-opens R9 while a spurious gate on
+// a command is only the defect this parameter exists to fix. See the gate call below.
+async function promoteAttachment(attachment, kind, batchMap, options) {
     const path = await attachment.getFilePathAsync();
     if (_shuttingDown) throw new Error('E_SHUTDOWN');
     if (!path) throw new Error('E_HEADER_MALFORMED');
@@ -467,8 +471,21 @@ async function promoteAttachment(attachment, kind, batchMap) {
 
     // The gate runs after detection and parse, before the promoter proper, and
     // short-circuits at the cheapest tier that resolves.
-    const gated = await duplicateGate(attachment, payload, batchMap);
-    if (gated !== null) return gated;
+    //
+    // It is skipped ONLY for a user-initiated resolution command. Both of those commands
+    // exist because the gate's decision was a guess about user intent, so re-running the
+    // gate on the path the user took to OVERRIDE it re-applies the decision being overridden
+    // and the command silently undoes itself. The two arms fail differently and both were
+    // observed or established by reading: a split re-promotes, tier 3 finds the parent just
+    // detached from, the files are byte-identical, and the attachment is reparented onto the
+    // same item; a promote-as-separate re-promotes, tier 3 finds the existing item, the files
+    // differ by construction (that is why it was withheld), and applyDuplicateOutcome re-adds
+    // the very tag the command is about to remove. In both cases the user sees the tag
+    // disappear and nothing else change.
+    if (!(options && options.skipDuplicateGate === true)) {
+        const gated = await duplicateGate(attachment, payload, batchMap);
+        if (gated !== null) return gated;
+    }
 
     const parentItem = new Zotero.Item(payload.itemType);
     parentItem.libraryID = attachment.libraryID;
@@ -770,6 +787,51 @@ function taggedItems(ctx, tagName) {
     return ((ctx && ctx.items) || []).filter(it => it && it.hasTag && it.hasTag(tagName));
 }
 
+// ===== Menu visibility predicates =====
+//
+// SYNCHRONOUS BY NECESSITY, and this is not a style choice. MenuManager invokes onShowing
+// inline while the popup is being built and discards the return value, so a promise returned
+// here is never awaited and the entry renders with its default visibility. That rules out
+// detectAttachmentKind, which reads the file. The filename extension is the only synchronous
+// discriminant available and it is the right one for a MENU: the command itself still runs
+// the magic-byte sniff, so a PDF misnamed .eml is offered the command and correctly declined
+// by it. The reverse error -- an .eml named .txt -- loses the menu entry, which is the safe
+// direction, and the drop path is unaffected because it never consults the menu.
+//
+// FAILURE IS OPEN, NOT CLOSED. The plugin API wraps every plugin-supplied callback and
+// swallows a throw, returning a fallback without touching the element -- and `hidden`
+// defaults to unset, so a predicate that throws leaves the entry VISIBLE. The per-item catch
+// below is what keeps one malformed item in a multi-select from revealing every entry.
+function anySelected(ctx, predicate) {
+    const items = (ctx && ctx.items) || [];
+    for (const it of items) {
+        try { if (it && predicate(it)) return true; }
+        catch (e) { /* one bad item must not reveal the entry; see the note above */ }
+    }
+    return false;
+}
+
+function looksLikeEmailFile(it) {
+    return typeof it.isFileAttachment === 'function'
+        && it.isFileAttachment()
+        && !it.parentItemID
+        && /\.(eml|msg)$/i.test(it.attachmentFilename || '');
+}
+
+function isParentedAttachment(it) {
+    return typeof it.isFileAttachment === 'function' && it.isFileAttachment() && !!it.parentItemID;
+}
+
+function hasPluginTag(it, tagName) {
+    return typeof it.hasTag === 'function' && it.hasTag(tagName);
+}
+
+// ctx.setVisible is supplied by the platform's default menu context and is guarded because
+// the underlying element is held by a WeakRef that may already be gone.
+function setMenuVisible(ctx, visible) {
+    if (ctx && typeof ctx.setVisible === 'function') ctx.setVisible(visible);
+}
+
 // Detach an attachment from its parent and give it its own item, reusing the promoter.
 async function splitOutOfParent(attachment, batchMap) {
     await Zotero.DB.executeTransaction(async function () {
@@ -778,7 +840,9 @@ async function splitOutOfParent(attachment, batchMap) {
     });
     const kind = await detectAttachmentKind(attachment);
     if (kind === null) return 'E_NOT_EMAIL';
-    return await promoteAttachment(attachment, kind, batchMap);
+    // The gate is skipped: this call IS the user overriding the gate's decision, and the
+    // attachment was detached from the very parent tier 3 would find one line later.
+    return await promoteAttachment(attachment, kind, batchMap, { skipDuplicateGate: true });
 }
 
 async function removeTag(attachment, tagName) {
@@ -815,7 +879,12 @@ async function resolveDuplicate(ctx) {
                 });
             }
             else {
-                await promoteSelectedOne(attachment);
+                // A null return means detection failed -- the file no longer resolves, or it
+                // is no longer one of ours. Nothing was promoted, so the tag must stay: it is
+                // the ONLY predicate that makes this command appear, and removing it on a
+                // no-op leaves the item permanently unresolvable with no error the user sees.
+                const promoted = await promoteSelectedOne(attachment);
+                if (promoted === null) { logSafe(attachment.key, 'E_NOT_EMAIL'); continue; }
             }
             await removeTag(attachment, TAG_DUPLICATE);
         }
@@ -840,8 +909,15 @@ async function reviewAutoAttached(ctx) {
 
             if (choice === 1) {
                 const batchMap = new Map();
-                try { await splitOutOfParent(attachment, batchMap); }
+                let split;
+                try { split = await splitOutOfParent(attachment, batchMap); }
                 finally { batchMap.clear(); }
+                // Same reasoning as the resolve-duplicate arm: on E_NOT_EMAIL the detach has
+                // already happened and no parent was created, so the honest state is a
+                // standalone attachment that still carries its tag. Removing the tag here
+                // would report a split that did not occur and strip the predicate that makes
+                // this command appear.
+                if (split === 'E_NOT_EMAIL') { logSafe(attachment.key, 'E_NOT_EMAIL'); continue; }
             }
             await removeTag(attachment, TAG_AUTO_ATTACHED);
         }
@@ -900,12 +976,16 @@ async function findExistingByMessageId(attachment, messageId) {
     return null;
 }
 
+// Called only from resolveDuplicate's "promote as a separate item" arm. The gate is skipped
+// for the reason stated at the gate call: the withheld file differs from the existing one by
+// construction, so re-gating reaches E_DUPLICATE_WITHHELD and re-tags the attachment the
+// caller is about to untag.
 async function promoteSelectedOne(attachment) {
     const batchMap = new Map();
     try {
         const kind = await detectAttachmentKind(attachment);
         if (kind === null) return null;
-        return await promoteAttachment(attachment, kind, batchMap);
+        return await promoteAttachment(attachment, kind, batchMap, { skipDuplicateGate: true });
     }
     finally { batchMap.clear(); }
 }
@@ -940,6 +1020,7 @@ EmailIntake.main = async function () {
             menus: [{
                 menuType: 'menuitem',
                 l10nID: 'emailintake-promote-label',
+                onShowing: (ev, ctx) => setMenuVisible(ctx, anySelected(ctx, looksLikeEmailFile)),
                 onCommand: (ev, ctx) => promoteSelected(ctx)
             }]
         });
@@ -964,6 +1045,7 @@ EmailIntake.main = async function () {
             menus: [{
                 menuType: 'menuitem',
                 l10nID: 'emailintake-repromote-label',
+                onShowing: (ev, ctx) => setMenuVisible(ctx, anySelected(ctx, isParentedAttachment)),
                 onCommand: (ev, ctx) => repromoteSelected(ctx)
             }]
         }));
@@ -978,6 +1060,8 @@ EmailIntake.main = async function () {
             menus: [{
                 menuType: 'menuitem',
                 l10nID: 'emailintake-resolve-duplicate-label',
+                onShowing: (ev, ctx) => setMenuVisible(ctx,
+                    anySelected(ctx, it => hasPluginTag(it, TAG_DUPLICATE))),
                 onCommand: (ev, ctx) => resolveDuplicate(ctx)
             }]
         }));
@@ -992,6 +1076,8 @@ EmailIntake.main = async function () {
             menus: [{
                 menuType: 'menuitem',
                 l10nID: 'emailintake-review-auto-label',
+                onShowing: (ev, ctx) => setMenuVisible(ctx,
+                    anySelected(ctx, it => hasPluginTag(it, TAG_AUTO_ATTACHED))),
                 onCommand: (ev, ctx) => reviewAutoAttached(ctx)
             }]
         }));
