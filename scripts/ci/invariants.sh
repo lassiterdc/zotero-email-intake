@@ -179,6 +179,32 @@ r11_files=$(shipped_files)
 # shellcheck disable=SC2086
 [ -n "$r11_files" ] && scan R11-no-chrome-registration 'register[C]hrome|aom[S]tartup|chrome:\/\/' $r11_files
 
+# --- R12: every src/*.js is reachable from the loader. Universe: src/*.js, which excludes
+#          src/probe.sys.mjs correctly and by construction -- that file is an ES module
+#          reached through ChromeUtils.importESModule, not loadSubScript, so the loader
+#          lists must NOT name it. R10 already iterates this universe; the idiom is reused.
+#
+#          This rule exists because a file that is created, tested and shipped but never
+#          named in bootstrap.js fails INVISIBLY: node --test loads it through require and
+#          passes, while the sandbox never evaluates it and every dependent degrades to a
+#          clean null. src/message.js hit this in Phase 1 and src/cfb.js shipped this way
+#          until Phase 3b, where every .msg failed as E_HEADER_MALFORMED with all 17 tests
+#          green. Note R03 above has always enumerated src/cfb.js -- the suite and the
+#          loader disagreed, and nothing compared them. This rule is that comparison.
+#
+#          Line comments are stripped before matching so a commented-out mention cannot
+#          satisfy the rule. A reformat that breaks the quoted-path form fails CLOSED (a
+#          finding), which is the safe direction for a rule that exists to catch omissions.
+if [ -f bootstrap.js ]; then
+    loader_text=$(sed 's://.*::' bootstrap.js)
+    for f in $( { [ -d src ] && find src -maxdepth 1 -type f -name '*.js'; } | sort ); do
+        case "$loader_text" in
+            *"\"$f\""*) ;;
+            *) emit R12-loader-reachable "$f" 1 'not named in a bootstrap.js loader list' ;;
+        esac
+    done
+fi
+
 # One decision point. A finding anywhere means exit 1, and the findings are printed from
 # the accumulator rather than as they are discovered, so no pipeline subshell can swallow
 # the verdict.

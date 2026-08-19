@@ -155,10 +155,20 @@ var PROP_SENDER_EMAIL = '__substg1.0_0C1F001F';
  * message never traversed SMTP", which is indistinguishable from correct behaviour.
  * Narrowing to `MODULE_NOT_FOUND` does not fix it either: cfb.js requiring something
  * missing of its own raises the same code and would be misattributed to cfb.js being
- * absent. Letting the error escape is what makes the failure name its own cause. The
- * branch is unreachable in the sandbox, where `readStream` resolves above and `require`
- * is not a granted global, so the trailing `return null` is the sandbox's degradation
- * path and the host-side per-item try/catch contains anything that does escape.
+ * absent. Letting the error escape is what makes the failure name its own cause.
+ *
+ * THE TRAILING `return null` IS REACHABLE IN THE SANDBOX, and an earlier version of this
+ * comment asserted the opposite. It is reached whenever src/cfb.js has not been evaluated
+ * into the flat global -- which was the shipped state until the loader was corrected,
+ * because bootstrap.js named only src/message.js in `pureJS`. `require` is genuinely not a
+ * granted sandbox global, so with cfb.js absent BOTH tests fail and this line runs. The
+ * consequence is the one the paragraph above warns about, arriving by a route that
+ * paragraph did not consider: a clean `null` propagates through unicodePropFromMsg to
+ * textFromMsg to parseMsg, every .msg declines as E_HEADER_MALFORMED, and the reduced
+ * fallback item is indistinguishable from "this message never traversed SMTP". Under
+ * `node --test` the require branch resolves, so all tests pass and the sandbox branch has
+ * zero coverage. R12-loader-reachable in scripts/ci/invariants.sh is what now stands
+ * between this file and a repeat; do not restore the unreachability claim.
  */
 function getStreamReader() {
     if (typeof readStream === 'function') return readStream;

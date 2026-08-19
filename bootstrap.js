@@ -12,7 +12,16 @@
 const pluginName  = "Email Intake for Zotero";
 const pluginId    = "emailintake@lassiterdc.github.io";
 const version     = "0.1.0";
-const pureJS      = ["src/message.js"];                 // Zotero-free modules; evaluated before mainJS
+// cfb.js BEFORE message.js: it is message.js's dependency, and a list that runs
+// dependency-before-dependent stays correct if the no-evaluation-time-calls rule in
+// src/intake.js's header is ever relaxed. Order is NOT load-bearing today -- getStreamReader
+// resolves readStream at call time, on the drop path, long after every subscript has been
+// evaluated -- so this is legibility, not correctness. What IS correctness is that cfb.js
+// appears here at all: omitted, readStream is never defined in the sandbox global,
+// getStreamReader falls through to a require that the sandbox does not grant, and every
+// MAPI property read returns null. Every .msg then fails as E_HEADER_MALFORMED while
+// node --test passes, because the test harness reaches cfb.js through require.
+const pureJS      = ["src/cfb.js", "src/message.js"];   // Zotero-free modules; evaluated before mainJS
 const mainJS      = "src/intake.js";                    // This is the actual plugin code
 const mainFTL     = "emailintake.ftl";                  // Localization file
 const prefXHTML   = "prefs.xhtml";                      // Document for the pref window
