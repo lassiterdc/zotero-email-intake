@@ -153,6 +153,11 @@ var CONTAINER_READ_CAP = 33554432;   // 32 MB
 // function involved is reachable through a public surface in any case.
 var ZOTMOOV_DST_PREF = 'extensions.zotmoov.dst_dir';
 
+// The other plugin's extension allowlist, read for the same reason and under the same
+// constraint as dst_dir above: as a PREFERENCE VALUE only. Taking a dependency on
+// ZotMoov's API is forbidden by the architecture constraint that motivates tier 0.
+var ZOTMOOV_EXT_PREF = 'extensions.zotmoov.allowed_fileext';
+
 // ===== Diagnostics =====
 
 // Gated on the debugLogging pref and emitted through Zotero.debug, never Zotero.logError:
@@ -653,6 +658,161 @@ async function applyParseFailureTag(item, outcome) {
     catch (e) { logSafe(item && item.key, 'E_UNEXPECTED'); }
 }
 
+// ===== ZotMoov extension-allowlist prompt =====
+//
+// ZotMoov filters automove candidates by file extension BEFORE it consults dst_dir or the
+// subdirectory template, and its shipped allowlist is ["pdf","epub","docx","djvu"]. A user
+// on a stock ZotMoov gets a message that promotes correctly, renames correctly, and then
+// silently stays in Zotero storage -- which presents as this plugin failing and is not.
+// That has now happened twice in this plan: Phase 1 on .eml, Phase 3b on .msg.
+
+// Returns ZotMoov's allowlist as an array of lowercased extensions, or null meaning
+// "no ZotMoov, or nothing we can safely reason about -- do not prompt".
+//
+// NEVER REPAIR A MALFORMED VALUE. If the parse throws, the user has hand-edited the pref
+// and their broken value is worth more than our guess at their intent: they can see it and
+// fix it in ZotMoov's own settings pane, and a write from us could make it worse. Note the
+// direction of the hazard -- ZotMoov's getBasePrefs() calls JSON.parse on this string with
+// NO try/catch, so a bad value written by us does not degrade our feature, it throws inside
+// another plugin's core path and stops its filing entirely.
+function zotmoovAllowedExtensions() {
+    let raw;
+    try { raw = Zotero.Prefs.get(ZOTMOOV_EXT_PREF, true); }
+    catch (e) { return null; }
+    if (typeof raw !== 'string' || raw === '') return null;
+    let parsed;
+    try { parsed = JSON.parse(raw); }
+    catch (e) { logSafe('-', 'E_UNEXPECTED'); return null; }
+    if (!Array.isArray(parsed)) return null;
+    const out = [];
+    for (const entry of parsed) {
+        if (typeof entry !== 'string') return null;
+        out.push(entry.toLowerCase());
+    }
+    return out;
+}
+
+// The extension ZotMoov will test, taken from the FILENAME and deliberately NOT from our
+// sniffed `kind`. Every other predicate in this file reaches for `kind`, so the next reader
+// will read this as an inconsistency: it is not. ZotMoov tests
+// Zotero.File.getExtension(file_path).toLowerCase(), so an .eml misnamed .txt -- which we
+// promote happily on magic bytes -- is filtered by ZotMoov as `txt`, and a prompt offering
+// to allowlist `eml` would not fix the file the user is actually looking at.
+function zotmoovExtensionOf(item) {
+    const name = (item && item.attachmentFilename) || '';
+    const dot = name.lastIndexOf('.');
+    if (dot <= 0 || dot === name.length - 1) return null;
+    return name.slice(dot + 1).toLowerCase();
+}
+
+function zotmoovSuppressed(ext) {
+    const raw = EmailIntake.getPref('zotmoovPromptSuppressed');
+    if (typeof raw !== 'string' || raw === '') return false;
+    return raw.split(',').indexOf(ext) !== -1;
+}
+
+// Session-scoped decline. A "Not now" without the checkbox suppresses for the rest of this
+// session only: the checkbox is the explicit permanent off-switch and is offered every
+// time, and silently promoting one "no" into "never" is the conversion it exists to make
+// deliberate. `var`, per this file's top-level declaration-form rule.
+var _zotmoovDeclinedThisSession = [];
+
+// Collect, per batch, the extensions ZotMoov would filter out. Returns nothing; mutates the
+// caller's array. A missing or unparseable allowlist means no prompt at all.
+function collectZotmoovGaps(item, allowed, gaps) {
+    if (allowed === null) return;
+    const ext = zotmoovExtensionOf(item);
+    if (ext === null) return;
+    if (allowed.indexOf(ext) !== -1) return;
+    if (zotmoovSuppressed(ext)) return;
+    if (_zotmoovDeclinedThisSession.indexOf(ext) !== -1) return;
+    if (gaps.indexOf(ext) === -1) gaps.push(ext);
+}
+
+// Append to ZotMoov's allowlist. Read-modify-write against the CURRENT value rather than
+// against the array read at collection time, because the user may have edited the pref in
+// between. JSON.stringify of a string array cannot emit invalid JSON, so the guard that
+// matters is the never-repair rule in zotmoovAllowedExtensions, not the encode.
+//
+// Two consequences, neither preventable from here and both accepted rather than hidden.
+// getBasePrefs() re-reads and re-parses on every automove, so this takes effect on the next
+// drop with no Zotero restart and no ZotMoov reload. But allowed_fileext also has
+// first-class UI in ZotMoov's settings pane, whose controller reads the array into
+// component state at pane-init and writes the whole array back on any +/- -- so a write
+// landing while that pane is open is silently reverted by the user's next edit there.
+function zotmoovAddExtensions(exts) {
+    const current = zotmoovAllowedExtensions();
+    if (current === null) return false;
+    let changed = false;
+    for (const ext of exts) {
+        if (current.indexOf(ext) === -1) { current.push(ext); changed = true; }
+    }
+    if (!changed) return false;
+    try { Zotero.Prefs.set(ZOTMOOV_EXT_PREF, JSON.stringify(current), true); }
+    catch (e) { logSafe('-', 'E_UNEXPECTED'); return false; }
+    return true;
+}
+
+function rememberZotmoovSuppression(exts) {
+    const raw = EmailIntake.getPref('zotmoovPromptSuppressed');
+    const held = (typeof raw === 'string' && raw !== '') ? raw.split(',') : [];
+    for (const ext of exts) {
+        if (held.indexOf(ext) === -1) held.push(ext);
+    }
+    try { Zotero.Prefs.set('extensions.emailintake.zotmoovPromptSuppressed', held.join(','), true); }
+    catch (e) { logSafe('-', 'E_UNEXPECTED'); }
+}
+
+// Raise the prompt OFF the notifier turn, and this is the part that is wrong if it is
+// written the obvious way. confirmEx is modal and synchronous; the notifier dispatcher
+// AWAITS each observer in priority order; this plugin registers at 50 and ZotMoov at 100.
+// A modal raised inside notify therefore blocks ZotMoov's automove behind a dialog asking
+// the user whether ZotMoov should handle these files. setTimeout(..., 0) lets the whole
+// notifier chain drain first.
+//
+// The consequence is stated in the prompt's own wording rather than left to be discovered:
+// the answer cannot retroactively file the drop that raised it. Making it do so would mean
+// re-invoking ZotMoov's automove, which is the API dependency the architecture forbids.
+function scheduleZotmoovPrompt(gaps) {
+    if (gaps.length === 0) return;
+    const exts = gaps.slice();
+    setTimeout(function () {
+        try {
+            if (_shuttingDown) return;
+            const label = exts.map(e => '.' + e).join(', ');
+            const ps = Services.prompt;
+            const flags = ps.BUTTON_POS_0 * ps.BUTTON_TITLE_IS_STRING
+                + ps.BUTTON_POS_1 * ps.BUTTON_TITLE_IS_STRING;
+            // Positions 8 and 9 are aCheckMsg and aCheckState. askTwoOutcomes already
+            // passes null, null, {} there -- the slot was threaded and unused -- and this
+            // is the same platform affordance Zotero core uses for its own "Don't show
+            // again", reading checkState.value after the call.
+            const checkState = { value: false };
+            const choice = ps.confirmEx(
+                Zotero.getMainWindow(),
+                EmailIntake.getLocalizedString('emailintake-zotmoov-prompt-title'),
+                EmailIntake.getLocalizedString('emailintake-zotmoov-prompt-body', { extensions: label }),
+                flags,
+                EmailIntake.getLocalizedString('emailintake-zotmoov-prompt-add'),
+                EmailIntake.getLocalizedString('emailintake-zotmoov-prompt-skip'),
+                null,
+                EmailIntake.getLocalizedString('emailintake-zotmoov-prompt-never', { extensions: label }),
+                checkState
+            );
+            if (checkState.value) rememberZotmoovSuppression(exts);
+            if (choice === 0) { zotmoovAddExtensions(exts); return; }
+            // Declined without the checkbox: quiet for this session only.
+            for (const ext of exts) {
+                if (_zotmoovDeclinedThisSession.indexOf(ext) === -1) _zotmoovDeclinedThisSession.push(ext);
+            }
+        }
+        catch (e) {
+            // A prompt that cannot be drawn must never cost the batch its result.
+            logSafe('-', 'E_UNEXPECTED');
+        }
+    }, 0);
+}
+
 // ===== Observer =====
 
 // notify is async and awaits the promotion. The guarantee that this runs to completion
@@ -676,6 +836,10 @@ EmailIntake.onItemChange = {
         // is reached and tier 2 would never fire -- invisibly, because the ladder still
         // produces correct results one tier down.
         const batchMap = new Map();
+        // Read ONCE per batch, not per item: a fifty-file drop must not raise fifty
+        // prompts, and one prompt naming every missing extension is the contract.
+        const zotmoovAllowed = zotmoovAllowedExtensions();
+        const zotmoovGaps = [];
 
         try {
         for (let i = 0; i < ids.length; i++) {
@@ -693,6 +857,7 @@ EmailIntake.onItemChange = {
 
                 outcome = await processOne(item, batchMap);
                 if (_shuttingDown) return;
+                if (outcome !== null) collectZotmoovGaps(item, zotmoovAllowed, zotmoovGaps);
                 await applyParseFailureTag(item, outcome);
             }
             catch (e) {
@@ -716,6 +881,7 @@ EmailIntake.onItemChange = {
 
         debugTrace('batch complete, ' + outcomes.length + ' counted');
         if (outcomes.length > 0) summariseBatch(outcomes.length, outcomes);
+        scheduleZotmoovPrompt(zotmoovGaps);
     }
 };
 
@@ -728,12 +894,15 @@ async function promoteSelected(ctx) {
     const items = (ctx && ctx.items) || [];
     const outcomes = [];
     const batchMap = new Map();
+    const zotmoovAllowed = zotmoovAllowedExtensions();
+    const zotmoovGaps = [];
     try {
         for (let i = 0; i < items.length; i++) {
             let outcome = null;
             try {
                 outcome = await processOne(items[i], batchMap);
                 if (_shuttingDown) return;
+                if (outcome !== null) collectZotmoovGaps(items[i], zotmoovAllowed, zotmoovGaps);
                 await applyParseFailureTag(items[i], outcome);
             }
             catch (e) {
@@ -749,6 +918,15 @@ async function promoteSelected(ctx) {
         batchMap.clear();
     }
     if (outcomes.length > 0) summariseBatch(outcomes.length, outcomes);
+    // The menu path prompts too, and the reason is a MECHANISM rather than a reading of
+    // the feature's wording. ZotMoov's notify dispatches BOTH add and modify into one
+    // debounced pass, and its modifyCallback applies no filter at all -- it clears and
+    // re-arms the same _execute timer addCallback arms. A menu-driven promotion emits
+    // modify events (the reparent save inside the promoter's transaction, then
+    // setAutoAttachmentTitle plus saveTx), so it reaches ZotMoov's filing path exactly as
+    // a drop does and is filtered by the same allowed_fileext gate. Scoping this to the
+    // drop path would leave the identical silent-non-filing trap open by a second route.
+    scheduleZotmoovPrompt(zotmoovGaps);
 }
 
 // ===== Resolution commands (R12) =====

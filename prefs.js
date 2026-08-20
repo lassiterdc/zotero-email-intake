@@ -42,3 +42,17 @@ pref("extensions.emailintake.onParseFailure", "leave");
 pref("extensions.emailintake.duplicateHandling", "split");
 pref("extensions.emailintake.recipientCap", 0);
 pref("extensions.emailintake.debugLogging", false);
+
+// The ZotMoov extension-allowlist prompt's per-extension suppression. Empty by default:
+// nothing is suppressed until the user ticks "never ask again" on a specific extension.
+//
+// COMMA-SEPARATED, DELIBERATELY NOT JSON. The entire hazard this feature manages is
+// another plugin's unguarded JSON.parse of a preference string; reproducing that shape in
+// our own preferences -- to hold at most two tokens -- would be adopting the failure mode
+// we are working around. Read with split(','), written with join(',').
+//
+// This default lands on the DEFAULT branch, as every value in this file does. The runtime
+// write goes to the USER branch through Zotero.Prefs.set, which is correct here for the
+// reason this file's header gives: the user branch is where a value is indistinguishable
+// from a deliberate user choice, and clicking "never ask again" is exactly that.
+pref("extensions.emailintake.zotmoovPromptSuppressed", "");

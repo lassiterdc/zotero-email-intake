@@ -120,3 +120,17 @@ emailintake-error-unexpected = Could not be promoted.
 # is about a malformed header block. E_ALREADY_FILED is a skip rather than a failure.
 emailintake-error-container-too-large = This message file is too large to read.
 emailintake-error-already-filed = Already filed away by another tool; left alone.
+
+# The ZotMoov extension-allowlist prompt. No `Zotmail:` prefix on these: that convention is
+# for right-click menu entries, and this is a dialog whose title already identifies it.
+#
+# The body carries the load. It must name the extensions, say that ZotMoov is installed but
+# not configured to file this type, state that the change applies to FUTURE drops rather
+# than the one just made -- the prompt is scheduled off the notifier turn and cannot
+# retroactively file the drop that raised it -- and say where the setting lives so the user
+# can audit or undo it in ZotMoov's own preferences rather than only through us.
+emailintake-zotmoov-prompt-title = File e-mail with ZotMoov?
+emailintake-zotmoov-prompt-body = ZotMoov is installed, but it is not set up to file { $extensions } files, so messages you promote will stay in Zotero's storage instead of moving to your attachment directory. Add { $extensions } to ZotMoov's allowed file extensions? This applies to future drops — the message you just added will not move on its own. You can review or undo the change any time in ZotMoov's preferences.
+emailintake-zotmoov-prompt-add = Add to ZotMoov
+emailintake-zotmoov-prompt-skip = Not now
+emailintake-zotmoov-prompt-never = Never ask about { $extensions } again

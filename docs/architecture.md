@@ -2,6 +2,8 @@
 
 **Status**: adopted, 2026-08-13. This is the architecture of record for the plugin, and it is a LIVING document: when implementation planning or implementation itself changes a decision recorded here, this file is updated in the same commit as that change. A divergence between this document and the code is a defect in one of them, never an accepted state.
 
+**Implemented**: `0.1.0`, tagged `v0.1.0`. Every decision recorded below is embodied in the artifact published at that tag; a reader comparing this document against a later working tree should date the difference from there rather than assume the document is stale.
+
 **How it was produced.** Two specialists — a Zotero-platform specialist and a software-engineering specialist — reviewed an initial draft across five adversarial rounds, arguing to concurrence. Every claim below about Zotero, ZotMoov, Better BibTeX, and Attachment Scanner behaviour was verified against those projects' source, or against a running Zotero 9.0.6 instance, rather than inferred. Both specialists reversed at least one position during review, each after locating an error in its own reasoning. The full argument record is retained outside this repo; this document is its settled output.
 
 **Provenance convention**: each section carries a `[src: …]` marker naming the review spec it came from. `zot` = the Zotero-platform specialist, `SE` = the software-engineering specialist, `R1`–`R5` = review round. `merged` = reconciled from both reviews. `unchanged` = carried from the initial draft untouched by any spec. The markers are retained because they record which claims were independently cross-validated and which were authored once.
