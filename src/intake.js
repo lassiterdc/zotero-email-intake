@@ -818,8 +818,26 @@ function looksLikeEmailFile(it) {
         && /\.(eml|msg)$/i.test(it.attachmentFilename || '');
 }
 
-function isParentedAttachment(it) {
-    return typeof it.isFileAttachment === 'function' && it.isFileAttachment() && !!it.parentItemID;
+// An attachment THIS PLUGIN promoted: the message file, under a parent we created. Both
+// halves are load-bearing and the defect this closes was a user's PDF. `parentItemID` alone
+// matches every parented attachment in the library, and the command is NOT inert when
+// clicked -- repromoteSelected renames the file on disk from the parent's metadata and
+// overwrites the attachment title, an unrequested rewrite of a record we did not create.
+// Extension alone would leave an .eml hand-attached to a journalArticle in scope; parent
+// type alone would leave a PDF attached to one of our email items in scope.
+//
+// SYNCHRONOUS, which is what makes the parent test available to a predicate at all.
+// Zotero.Items.get returns the cached object, `false` for an unknown id, and THROWS
+// UnloadedDataException for a registered-but-unloaded id. That throw is caught per item by
+// anySelected, so an unloaded parent yields a HIDDEN entry -- fail-closed. It is NOT the
+// fail-open case the block comment above warns about, which is a throw escaping onShowing
+// itself; the difference is that this call sits inside anySelected's catch.
+function isOurPromotedAttachment(it) {
+    if (typeof it.isFileAttachment !== 'function' || !it.isFileAttachment()) return false;
+    if (!it.parentItemID) return false;
+    if (!/\.(eml|msg)$/i.test(it.attachmentFilename || '')) return false;
+    const parent = Zotero.Items.get(it.parentItemID);
+    return !!parent && parent.itemType === 'email';
 }
 
 function hasPluginTag(it, tagName) {
@@ -1045,7 +1063,7 @@ EmailIntake.main = async function () {
             menus: [{
                 menuType: 'menuitem',
                 l10nID: 'emailintake-repromote-label',
-                onShowing: (ev, ctx) => setMenuVisible(ctx, anySelected(ctx, isParentedAttachment)),
+                onShowing: (ev, ctx) => setMenuVisible(ctx, anySelected(ctx, isOurPromotedAttachment)),
                 onCommand: (ev, ctx) => repromoteSelected(ctx)
             }]
         }));
