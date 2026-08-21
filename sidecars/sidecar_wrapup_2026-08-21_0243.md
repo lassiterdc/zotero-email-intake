@@ -19,9 +19,10 @@ smoke_test: false
 last_sync_hashes_normalized:
   '### Phase Audit History': 909c476091c8047bbc02ca4c3c74f3bf04a90ba0644dee04fd83b85e571923e9
   '# Follow-up Ideas': 2eab4eeb8fdca3d69088358fac77396bdbe33f2d5af0ddb84d60e5b1fc047644
+claimed_by_pid: 2122895
+claimed_by_session: 
 ---
-- [ ] in progress
-
+- [x] in progress
 ## Harness Discipline — Claude Code
 
 - Treat the first post-compaction message as a rehydration trigger, not a
