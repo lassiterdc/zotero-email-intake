@@ -1,0 +1,16 @@
+{
+  "itemType": "email",
+  "subject": "Revised gauge inventory",
+  "date": "2026-03-11",
+  "extra": "Message-ID: <0008.commafirst@example.org>",
+  "language": "",
+  "abstractNote": "",
+  "url": "",
+  "accessDate": "",
+  "DOI": "",
+  "rights": "",
+  "shortTitle": "",
+  "creators": [
+    { "creatorType": "author", "firstName": "Jane Q.", "lastName": "Public" }
+  ]
+}

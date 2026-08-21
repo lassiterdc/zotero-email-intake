@@ -1,0 +1,16 @@
+{
+  "itemType": "email",
+  "subject": "Überwachung der Pegelstände",
+  "date": "2026-03-10",
+  "extra": "Message-ID: <0006.b64fold@example.net>",
+  "language": "",
+  "abstractNote": "",
+  "url": "",
+  "accessDate": "",
+  "DOI": "",
+  "rights": "",
+  "shortTitle": "",
+  "creators": [
+    { "creatorType": "author", "firstName": "Ana", "lastName": "Roth" }
+  ]
+}

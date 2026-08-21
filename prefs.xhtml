@@ -1,0 +1,86 @@
+<linkset>
+  <html:link rel="localization" href="emailintake.ftl"/>
+</linkset>
+
+<!-- Preference pane for Email Intake.
+
+     No onload attribute: bootstrap.js ships an initPreference(document) helper, but it
+     only attaches focusin / focusout / visibilitychange listeners that dispatch to
+     onPreferenceWindowFocus / LoseFocus / Close / Open, every dispatch is guarded, and
+     src/intake.js defines none of them. Wiring it would register three listeners that
+     dispatch to nothing.
+
+     No pane script either. The preference= attribute is the entire wiring: Zotero walks
+     container.querySelectorAll('[preference]') when the pane loads and re-runs under a
+     MutationObserver scoped to that attribute, so these controls need zero JavaScript.
+
+     NO chrome: URLs of any kind in this file. R11-no-chrome-registration scans the
+     shipped artifact, which includes this file, and R02's carve-out does not extend to
+     R11, so an icon or stylesheet pulled the usual way would fail this phase's own
+     invariant suite on a file this phase creates. Plugin-local assets go through
+     rootURI-relative paths. -->
+
+<vbox xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+      xmlns:html="http://www.w3.org/1999/xhtml">
+
+  <groupbox>
+    <vbox>
+      <label><html:h2 label="" data-l10n-id="emailintake-pref-section-intake"/></label>
+
+      <checkbox native="true"
+                id="emailintake-pref-enabled"
+                preference="extensions.emailintake.enabled"
+                data-l10n-id="emailintake-pref-enabled"/>
+
+      <hbox align="center">
+        <label for="emailintake-pref-recipient-cap" data-l10n-id="emailintake-pref-recipient-cap"/>
+        <html:input type="number"
+                    min="0"
+                    id="emailintake-pref-recipient-cap"
+                    preference="extensions.emailintake.recipientCap"/>
+      </hbox>
+    </vbox>
+  </groupbox>
+
+  <groupbox>
+    <vbox>
+      <label><html:h2 label="" data-l10n-id="emailintake-pref-section-handling"/></label>
+
+      <hbox align="center">
+        <label for="emailintake-pref-on-parse-failure" data-l10n-id="emailintake-pref-on-parse-failure"/>
+        <menulist native="true"
+                  id="emailintake-pref-on-parse-failure"
+                  preference="extensions.emailintake.onParseFailure">
+          <menupopup>
+            <menuitem value="leave" data-l10n-id="emailintake-pref-on-parse-failure-leave"/>
+            <menuitem value="tag" data-l10n-id="emailintake-pref-on-parse-failure-tag"/>
+          </menupopup>
+        </menulist>
+      </hbox>
+
+      <hbox align="center">
+        <label for="emailintake-pref-duplicate-handling" data-l10n-id="emailintake-pref-duplicate-handling"/>
+        <menulist native="true"
+                  id="emailintake-pref-duplicate-handling"
+                  preference="extensions.emailintake.duplicateHandling">
+          <menupopup>
+            <menuitem value="split" data-l10n-id="emailintake-pref-duplicate-handling-split"/>
+            <menuitem value="off" data-l10n-id="emailintake-pref-duplicate-handling-off"/>
+          </menupopup>
+        </menulist>
+      </hbox>
+    </vbox>
+  </groupbox>
+
+  <groupbox>
+    <vbox>
+      <label><html:h2 label="" data-l10n-id="emailintake-pref-section-diagnostics"/></label>
+
+      <checkbox native="true"
+                id="emailintake-pref-debug-logging"
+                preference="extensions.emailintake.debugLogging"
+                data-l10n-id="emailintake-pref-debug-logging"/>
+    </vbox>
+  </groupbox>
+
+</vbox>

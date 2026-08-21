@@ -1,0 +1,6 @@
+From: Chris Ng <cng@example.org>
+To: Sam Roe <sroe@example.org>
+Subject: Field notes without a timestamp
+Message-ID: <0005.nodate@example.org>
+
+Body text is never parsed.

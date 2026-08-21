@@ -1,0 +1,16 @@
+{
+  "itemType": "email",
+  "subject": "Quarterly hydrology review",
+  "date": "2026-03-04",
+  "extra": "Message-ID: <0001.plain.ascii@example.com>",
+  "language": "",
+  "abstractNote": "",
+  "url": "",
+  "accessDate": "",
+  "DOI": "",
+  "rights": "",
+  "shortTitle": "",
+  "creators": [
+    { "creatorType": "author", "firstName": "Jane", "lastName": "Public" }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "itemType": "email",
+  "subject": "March newsletter",
+  "date": "2026-03-01",
+  "extra": "Message-ID: <0007.orgsender@example.com>",
+  "language": "",
+  "abstractNote": "",
+  "url": "",
+  "accessDate": "",
+  "DOI": "",
+  "rights": "",
+  "shortTitle": "",
+  "creators": [
+    { "creatorType": "author", "name": "Marketing Team", "fieldMode": 1 }
+  ]
+}

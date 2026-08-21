@@ -1,0 +1,140 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# The commit-back step needs write access to repository contents. manifest.json's
+# update_url is a raw.githubusercontent.com/.../main/update.json path rather than a
+# release-asset URL, so a run that only uploads update.json alongside the release
+# leaves the update channel returning 404 forever.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      # DEFAULT ref -- the TAGGED commit -- and NOT `ref: main`. An earlier draft checked
+      # out main because the commit-back needs the branch, and that was wrong in a way no
+      # later step could catch: it builds the XPI from whatever main's tip is when the
+      # runner starts, so a commit landing on main between the tag push and this step
+      # publishes unreleased code labelled with the tag, hashed, with that hash committed
+      # as the release's integrity claim. Tagging any commit that is not main's tip -- the
+      # ordinary hotfix shape -- reaches the same place by intent rather than by race.
+      #
+      # Building from the tag makes the artifact CORRECT in both cases rather than merely
+      # detecting when it is wrong, which is why this is preferred over asserting
+      # HEAD == github.sha after a main checkout. The commit-back's need for the branch is
+      # a separate concern and is handled separately, below, after the release exists.
+      #
+      # fetch-depth: 0 because the commit-back step later checks out main from the same
+      # clone; a shallow fetch cannot push a normal fast-forward.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Derive the version from the tag
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # A tag disagreeing with the shipped manifest would publish an update entry whose
+      # version no installed client can match, and the mismatch is invisible afterwards.
+      # Fail before building rather than after publishing.
+      #
+      # NOTE WHAT THIS DOES NOT COVER, because its presence here is exactly what would make
+      # a later reader assume more was checked: it compares a VERSION STRING and nothing
+      # else. It cannot detect a tree divergence, since building the wrong tree does not
+      # change that string. Tree identity is guaranteed structurally by the checkout above
+      # building from the tag -- not by this guard. Do not treat this step as licence to
+      # reintroduce `ref: main`.
+      - name: Verify the tag matches manifest.json
+        run: |
+          manifest_version="$(node -p "require('./manifest.json').version")"
+          if [ "$manifest_version" != "${{ steps.ver.outputs.version }}" ]; then
+            echo "tag ${GITHUB_REF_NAME} implies ${{ steps.ver.outputs.version }} but manifest.json carries ${manifest_version}" >&2
+            exit 1
+          fi
+
+      # INCLUDE list, never an exclude list, and this is a correctness decision rather
+      # than a style one. An exclude list fails OPEN: a directory added later ships
+      # unless someone remembers to exclude it. The first thing the exclude form would
+      # have shipped is .git/, publishing the repository's entire commit history inside
+      # every installed XPI -- which is precisely what the fixture-privacy gate exists
+      # to prevent, defeated in the artifact that gate is meant to protect. sidecars/ is
+      # the same defect at smaller scale. An include list fails CLOSED: a new runtime
+      # file is omitted until someone adds it here, which surfaces as a missing feature
+      # rather than as a silent data leak.
+      #
+      # These six are the entire runtime surface, verified from the loader rather than
+      # from the plan: bootstrap.js loads src/cfb.js, src/message.js and src/intake.js,
+      # and registers prefs.xhtml with prefs.js. manifest.json declares no icons,
+      # default_locale, or any other asset-bearing key, so it contributes no path of
+      # its own -- checked explicitly rather than assumed.
+      - name: Build the XPI
+        run: |
+          zip -r "zotero-email-intake-${{ steps.ver.outputs.version }}.xpi" \
+            manifest.json bootstrap.js prefs.js prefs.xhtml src locale
+
+      - name: Compute the digest
+        id: digest
+        run: echo "sha256=$(sha256sum "zotero-email-intake-${{ steps.ver.outputs.version }}.xpi" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+
+      # ORDERING IS DELIBERATE AND MUST NOT BE TIDIED BACK. The release is created and
+      # the asset uploaded BEFORE update.json is written, because update.json's
+      # update_link names that asset. Writing the manifest first publishes a link to an
+      # artifact that does not yet exist -- a live 404 on the very channel this phase
+      # exists to make work, for however long the upload takes.
+      - name: Create the release and upload the XPI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            "zotero-email-intake-${{ steps.ver.outputs.version }}.xpi" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes
+
+      # The build ran from the TAG, so HEAD is detached here. Switch to the default branch
+      # before writing update.json, so the file is written onto main's tree and the commit
+      # below is an ordinary fast-forward rather than a push of the tag's tree. This is the
+      # step that lets the checkout above build the tagged commit instead of main's tip.
+      - name: Switch to the default branch for the commit-back
+        run: |
+          git fetch origin main
+          git checkout -B main origin/main
+
+      # R09 asserts that an update.json carrying an update_link also carries a sha256:
+      # prefix. Until this step first runs, the committed update.json holds an empty
+      # updates array and no update_link, so R09 passes VACUOUSLY -- green over an empty
+      # denominator. That vacuity is self-resolving and this is the line that resolves
+      # it: the moment an update_link exists, so does the integrity claim R09 checks.
+      - name: Write update.json
+        run: |
+          node -e '
+            const version = process.argv[1];
+            const sha = process.argv[2];
+            const id = require("./manifest.json").applications.zotero.id;
+            const link = "https://github.com/" + process.env.GITHUB_REPOSITORY
+              + "/releases/download/v" + version
+              + "/zotero-email-intake-" + version + ".xpi";
+            const doc = { addons: { [id]: { updates: [
+              { version: version, update_link: link, update_hash: "sha256:" + sha }
+            ] } } };
+            require("fs").writeFileSync("update.json", JSON.stringify(doc, null, 2) + "\n");
+          ' "${{ steps.ver.outputs.version }}" "${{ steps.digest.outputs.sha256 }}"
+
+      # Pushed with the default GITHUB_TOKEN, and that is load-bearing rather than
+      # incidental: ci.yml triggers on a bare `push:` with no branch filter, so this
+      # commit would retrigger CI were it not for GitHub declining to raise workflow
+      # events for pushes made with GITHUB_TOKEN. A maintainer who swaps in a PAT here
+      # -- the natural move if main ever gains branch protection -- silently
+      # reintroduces that recursion.
+      - name: Commit update.json to the default branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add update.json
+          git diff --staged --quiet || git commit -m "chore(plugin-development): publish update.json for ${GITHUB_REF_NAME}"
+          git push origin HEAD:main

@@ -1,0 +1,16 @@
+{
+  "itemType": "email",
+  "subject": "Field notes without a timestamp",
+  "date": "",
+  "extra": "Message-ID: <0005.nodate@example.org>",
+  "language": "",
+  "abstractNote": "",
+  "url": "",
+  "accessDate": "",
+  "DOI": "",
+  "rights": "",
+  "shortTitle": "",
+  "creators": [
+    { "creatorType": "author", "firstName": "Chris", "lastName": "Ng" }
+  ]
+}

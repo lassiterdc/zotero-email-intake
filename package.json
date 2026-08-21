@@ -1,0 +1,13 @@
+{
+  "name": "zotero-email-intake",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Test harness only. The shipped plugin has no runtime dependencies and no build step.",
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "pretest": "node scripts/make-msg-fixture.js",
+    "test": "node --test \"test/**/*.test.js\"",
+    "ci": "bash scripts/ci/invariants.sh && bash scripts/ci/run-tests.sh"
+  }
+}

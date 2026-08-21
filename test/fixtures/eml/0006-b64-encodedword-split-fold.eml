@@ -1,0 +1,8 @@
+From: Ana Roth <aroth@example.net>
+To: Sam Roe <sroe@example.org>
+Subject: =?UTF-8?B?w5xiZXJ3YWNodW5nIGRlcg==?=
+ =?UTF-8?B?IFBlZ2Vsc3TDpG5kZQ==?=
+Date: Tue, 10 Mar 2026 16:45:00 +0100
+Message-ID: <0006.b64fold@example.net>
+
+Body text is never parsed.

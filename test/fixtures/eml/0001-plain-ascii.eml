@@ -1,0 +1,8 @@
+From: Jane Public <jpublic@example.com>
+To: Sam Roe <sroe@example.org>
+Subject: Quarterly hydrology review
+Date: Wed, 4 Mar 2026 09:15:00 -0500
+Message-ID: <0001.plain.ascii@example.com>
+Content-Type: text/plain; charset=us-ascii
+
+Body text is never parsed.

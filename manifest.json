@@ -9,8 +9,8 @@
     "zotero": {
       "id": "emailintake@lassiterdc.github.io",
       "update_url": "https://raw.githubusercontent.com/lassiterdc/zotero-email-intake/main/update.json",
-      "strict_min_version": "7.0",
-      "strict_max_version": "7.*"
+      "strict_min_version": "6.999",
+      "strict_max_version": "*"
     }
   }
 }
