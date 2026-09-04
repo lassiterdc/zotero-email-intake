@@ -3,9 +3,9 @@
     "emailintake@lassiterdc.github.io": {
       "updates": [
         {
-          "version": "0.1.0",
-          "update_link": "https://github.com/lassiterdc/zotero-email-intake/releases/download/v0.1.0/zotero-email-intake-0.1.0.xpi",
-          "update_hash": "sha256:ebb2399da67d911c7c5363eb0f487bc95705758995bbe85fb42197e7fc8b7f03"
+          "version": "0.1.1",
+          "update_link": "https://github.com/lassiterdc/zotero-email-intake/releases/download/v0.1.1/zotero-email-intake-0.1.1.xpi",
+          "update_hash": "sha256:15c93e5d2e4df04682d9178a12a45730add54a4b3f54bb8a6e6acdda87fcce64"
         }
       ]
     }
