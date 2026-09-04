@@ -104,7 +104,8 @@ emailintake-declined-msg = This .msg carries no internet headers, so it cannot b
 # have to be reopened to add them. A reviewer running Validation Plan item 5 will find
 # three entries with no referencing call site; that is expected, not a defect.
 emailintake-error-not-email = Not an e-mail file.
-emailintake-error-too-large = No header terminator within the size limit.
+emailintake-error-no-header-terminator = The header block has no terminating blank line.
+emailintake-error-sniff-failed = The file name says e-mail, but the contents are not a message.
 emailintake-error-header-malformed = The message headers could not be read.
 emailintake-error-duplicate-attached = Already in the library; the file matched and was attached.
 emailintake-error-duplicate-withheld = Already in the library, but the file differs; left as dropped.
@@ -116,7 +117,7 @@ emailintake-error-unexpected = Could not be promoted.
 
 # The two codes Phase 3b adds to the taxonomy, per this file's one-string-per-code
 # convention. E_CONTAINER_TOO_LARGE must say the file is too large to READ rather than that
-# it could not be parsed -- the user's remedy differs, and emailintake-error-too-large above
+# it could not be parsed -- the user's remedy differs, and emailintake-error-no-header-terminator above
 # is about a malformed header block. E_ALREADY_FILED is a skip rather than a failure.
 emailintake-error-container-too-large = This message file is too large to read.
 emailintake-error-already-filed = Already filed away by another tool; left alone.

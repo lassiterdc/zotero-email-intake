@@ -11,7 +11,7 @@
 
 const pluginName  = "Email Intake for Zotero";
 const pluginId    = "emailintake@lassiterdc.github.io";
-const version     = "0.1.0";
+const version     = "0.1.1";
 // cfb.js BEFORE message.js: it is message.js's dependency, and a list that runs
 // dependency-before-dependent stays correct if the no-evaluation-time-calls rule in
 // src/intake.js's header is ever relaxed. Order is NOT load-bearing today -- getStreamReader

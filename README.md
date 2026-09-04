@@ -14,7 +14,7 @@ For `.eml`, and for any `.msg` that carries the message's original internet head
 
 ## Status
 
-Shipped at `0.1.0`. `bootstrap.js` is the adopted Attachment Scanner loader: it wires the Zotero bootstrap lifecycle, publishes `Zotero.EmailIntake`, and registers a single item-notifier observer at priority 50 — ahead of ZotMoov's 100, which is what lets a promoted message be filed under its parent's metadata rather than as a parentless attachment. `src/intake.js` carries the promoter, the three-tier duplicate ladder, the four right-click commands and the batch summary; `src/message.js` and `src/cfb.js` are the host-free parser core, and twelve invariants in `scripts/ci/invariants.sh` are enforced on every commit and in CI.
+Shipped at `0.1.1`. `bootstrap.js` is the adopted Attachment Scanner loader: it wires the Zotero bootstrap lifecycle, publishes `Zotero.EmailIntake`, and registers a single item-notifier observer at priority 50 — ahead of ZotMoov's 100, which is what lets a promoted message be filed under its parent's metadata rather than as a parentless attachment. `src/intake.js` carries the promoter, the three-tier duplicate ladder, the four right-click commands and the batch summary; `src/message.js` and `src/cfb.js` are the host-free parser core, and twelve invariants in `scripts/ci/invariants.sh` are enforced on every commit and in CI.
 
 ## Install
 

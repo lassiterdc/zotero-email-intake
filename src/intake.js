@@ -56,7 +56,7 @@ var OUTCOME_PROMOTED = 'PROMOTED';
 // strings and the summary are settled in one place rather than reopened later.
 var OUTCOME_CODES = [
     'E_NOT_EMAIL',            // the content sniff failed
-    'E_TOO_LARGE',            // no header terminator within the 256 KB cap
+    'E_NO_HEADER_TERMINATOR', // no blank line terminating the header block, at any size
     'E_HEADER_MALFORMED',     // a required header is absent or unparseable
     'E_DUPLICATE_ATTACHED',   // Message-ID matched, files identical, attachment reparented
     'E_DUPLICATE_WITHHELD',   // Message-ID matched, files differ, left standalone and tagged
@@ -66,12 +66,19 @@ var OUTCOME_CODES = [
     'E_RENAME_FAILED',        // parented correctly, but the file kept its export name
     'E_UNEXPECTED',           // anything the per-item catch sees that is none of the above
     // Phase 3b. E_CONTAINER_TOO_LARGE is the ELEVENTH member and is NOT a reuse of
-    // E_TOO_LARGE: that code asserts "no header terminator within the cap", and for an
-    // oversized container no such claim can be made because the file was never opened.
+    // E_NO_HEADER_TERMINATOR: that code asserts "the header block has no blank-line
+    // terminator", and for an oversized container no such claim can be made because the
+    // file was never opened.
     // The two differ in cause (size vs malformed structure), in stage (a pre-read refusal
     // vs a parse outcome) and in remedy (re-export or raise the cap vs report a defect).
     'E_CONTAINER_TOO_LARGE',  // container above the per-format cap; refused before reading
-    'E_ALREADY_FILED'         // already a linked file under another plugin's destination
+    'E_ALREADY_FILED',        // already a linked file under another plugin's destination
+    // The THIRTEENTH member. Distinct from E_NOT_EMAIL rather than a reuse of it: that code
+    // means "detectAttachmentKind returned null for any of its four reasons" and is raised
+    // only on the menu and resolution paths, where the file may genuinely not be ours. This
+    // one means specifically "the filename claims .eml or .msg and the content sniff
+    // disagreed" -- ours by extension, and therefore taggable.
+    'E_SNIFF_FAILED'          // extension claims a message; the content sniff disagreed
 ];
 
 // The non-promoted codes that earn their own summary clause, in RENDER ORDER. Iterating
@@ -89,15 +96,18 @@ var SUMMARY_CLAUSE_CODES = [
     'E_CONTAINER_TOO_LARGE'
 ];
 
-// The outcomes the onParseFailure pref tags when it is set to "tag": the three codes that
-// mean "this was an e-mail file and it could not be read". Every other member is excluded
-// deliberately -- E_NOT_EMAIL because the file was never ours; E_ALREADY_PARENTED and
+// The outcomes the onParseFailure pref tags when it is set to "tag": the four codes that
+// mean "this claimed to be an e-mail file and could not be read". Every other member is
+// excluded deliberately -- E_NOT_EMAIL because it is raised only on the menu and
+// resolution paths, where the file may genuinely not be ours (E_SNIFF_FAILED is the drop
+// path's narrower code and IS tagged, because the filename claimed a message even though
+// the content sniff disagreed); E_ALREADY_PARENTED and
 // E_ALREADY_FILED because the item is already correct and a tag would assert a problem
 // that does not exist; the three duplicate codes because the ladder already writes its own
 // tag on each; E_RENAME_FAILED because the item DID promote and the failure is cosmetic;
 // E_SHUTDOWN because it is transient and the same drop succeeds next run; E_UNEXPECTED
 // because tagging an item to say "something unidentified happened" gives no action.
-var PARSE_FAILURE_TAG_CODES = ['E_TOO_LARGE', 'E_HEADER_MALFORMED', 'E_CONTAINER_TOO_LARGE'];
+var PARSE_FAILURE_TAG_CODES = ['E_NO_HEADER_TERMINATOR', 'E_HEADER_MALFORMED', 'E_CONTAINER_TOO_LARGE', 'E_SNIFF_FAILED'];
 
 // Tag names are IDENTIFIERS, not presentation strings, and are deliberately literal here
 // rather than drawn from the Fluent file. Both resolution commands are defined by a tag
@@ -466,7 +476,7 @@ async function promoteAttachment(attachment, kind, batchMap, options) {
         if (parsed === null) throw new Error('E_HEADER_MALFORMED');
     }
     else {
-        // parseHeaders throws E_TOO_LARGE on a missing header terminator and
+        // parseHeaders throws E_NO_HEADER_TERMINATOR on a missing header terminator and
         // E_HEADER_MALFORMED past the header-count cap. Both propagate to the per-item
         // catch, which is the whole signalling contract -- the pure module cannot log.
         parsed = parseHeaders(new TextDecoder('utf-8').decode(bytes));
@@ -632,7 +642,22 @@ function summariseBatch(itemCount, outcomes) {
 async function processOne(item, batchMap) {
     const kind = await detectAttachmentKind(item);
     if (_shuttingDown) throw new Error('E_SHUTDOWN');
-    if (kind === null) return null;                    // not ours; not counted at all
+    if (kind === null) {
+        // An extension-matching file whose sniff failed IS ours by extension, and its
+        // decline must be visible -- that visibility is what makes a wrong tolerance bound
+        // in skipContainerPreamble recoverable rather than silent. Anything else (a PDF
+        // dropped alongside the mail) stays uncounted, so a mixed drop does not trip
+        // summariseBatch's predicate. looksLikeEmailFile is a hoisted function declaration
+        // defined below; its !parentItemID conjunct also excludes the auto-attached-child
+        // case, which would otherwise raise a spurious code on every such drop.
+        //
+        // ORDER IS LOAD-BEARING: the guard runs BEFORE the log, so a stray PDF in a mixed
+        // drop emits nothing. Collapsing these three lines into a ternary that logs first
+        // would emit one logError line per non-email file in every mixed drop.
+        if (!looksLikeEmailFile(item)) return null;
+        logSafe(item.key, 'E_SNIFF_FAILED');
+        return 'E_SNIFF_FAILED';
+    }
     debugTrace('detected ' + kind + ' ' + item.key);
 
     // Tier 0, before anything reads or writes. A file already moved out from under this
@@ -857,7 +882,10 @@ EmailIntake.onItemChange = {
 
                 outcome = await processOne(item, batchMap);
                 if (_shuttingDown) return;
-                if (outcome !== null) collectZotmoovGaps(item, zotmoovAllowed, zotmoovGaps);
+                // E_SNIFF_FAILED is excluded deliberately: the file was DECLINED, so it will
+                // never be filed as a message, and offering to widen the other plugin's
+                // allowlist for it asks the user to configure filing for a non-message.
+                if (outcome !== null && outcome !== 'E_SNIFF_FAILED') collectZotmoovGaps(item, zotmoovAllowed, zotmoovGaps);
                 await applyParseFailureTag(item, outcome);
             }
             catch (e) {
@@ -902,7 +930,7 @@ async function promoteSelected(ctx) {
             try {
                 outcome = await processOne(items[i], batchMap);
                 if (_shuttingDown) return;
-                if (outcome !== null) collectZotmoovGaps(items[i], zotmoovAllowed, zotmoovGaps);
+                if (outcome !== null && outcome !== 'E_SNIFF_FAILED') collectZotmoovGaps(items[i], zotmoovAllowed, zotmoovGaps);
                 await applyParseFailureTag(items[i], outcome);
             }
             catch (e) {

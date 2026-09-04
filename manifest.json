@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Email Intake for Zotero",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Drag and drop emails into Zotero and automatically create and populate parent item metadata.",
   "homepage_url": "https://github.com/lassiterdc/zotero-email-intake",
   "author": "Daniel Lassiter",

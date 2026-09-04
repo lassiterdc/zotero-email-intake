@@ -31,6 +31,33 @@ test('detect classifies by magic bytes, not by extension', () => {
   assert.equal(detect(enc.encode('From: a@example.com\r\n'), 'x.pdf'), null);
 });
 
+test('detect skips a bounded container preamble, and only a bounded one', () => {
+  const enc = new TextEncoder();
+  const body = 'Received: from x.example (1.2.3.4)\r\nFrom: a@example.com\r\nSubject: hi\r\n\r\nb\r\n';
+
+  // ACCEPTED: the two named preamble shapes.
+  assert.equal(detect(enc.encode('From - Fri Sep 04 2026 02:06:53\r\n' + body), 'x.eml'), 'eml');
+  assert.equal(detect(enc.encode('>From - Fri Sep 04 2026 02:06:53\r\n' + body), 'x.eml'), 'eml');
+  assert.equal(detect(enc.encode('\uFEFF' + body), 'x.eml'), 'eml');
+  assert.equal(detect(enc.encode('\uFEFFFrom - Fri Sep 04 2026\r\n' + body), 'x.eml'), 'eml');
+
+  // REJECTED, and each for its own reason -- these are the bound, not incidental misses.
+  // obs-optional-field (RFC 5322 §4.5.8): consuming it would split `From : addr` into a
+  // field named `from ` with a trailing space and silently lose the sender.
+  assert.equal(detect(enc.encode('From : addr@example.com\r\n' + body), 'x.eml'), null);
+  // A multi-message mbox: accepting it would promote message 1 and discard the rest.
+  assert.equal(detect(enc.encode('From a@e.com Fri Sep  4 05:01:43 2026\r\n' + body), 'x.eml'), null);
+  // Two preamble lines: the skip is bounded at one.
+  assert.equal(detect(enc.encode('From - x\r\nFrom - y\r\n' + body), 'x.eml'), null);
+  // Unchanged behaviour, asserted so the widening cannot silently take these with it.
+  assert.equal(detect(enc.encode('%PDF-1.7\r\n'), 'x.eml'), null);
+  assert.equal(detect(enc.encode('\r\n' + body), 'x.eml'), null);
+
+  // The committed fixture corpus opens `From: ` -- the matcher must NOT consume it,
+  // because `From:` has no space before the colon.
+  assert.equal(detect(enc.encode(body), 'x.eml'), 'eml');
+});
+
 // The stretch's cross-container check. Byte identity between an .eml and its .msg twin
 // is not guaranteed by the formats, so this asserts equality of the PARSED result --
 // the property the one-parser-two-readers seam actually claims -- rather than of the

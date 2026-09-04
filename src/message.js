@@ -78,7 +78,7 @@ var ORG_KEYWORDS = [
 function detect(bytes, filename) {
     var name = String(filename || '').toLowerCase();
     if (endsWith(name, '.eml')) {
-        return looksLikeHeaderBlock(bytes) ? 'eml' : null;
+        return looksLikeHeaderBlock(bytes, skipContainerPreamble(bytes)) ? 'eml' : null;
     }
     if (endsWith(name, '.msg')) {
         return hasCfbMagic(bytes) ? 'msg' : null;
@@ -98,18 +98,72 @@ function hasCfbMagic(bytes) {
 }
 
 /**
- * RFC 5322 has no magic number, so the sniff is structural: the first line must be a
- * well-formed header field -- a run of printable ASCII excluding the colon, then a
- * colon. `%PDF-` fails on the missing colon, which is the discriminator the detect
+ * `From - ` at `start`, the literal Thunderbird placeholder-sender form of the mbox
+ * From_ separator. The trailing space is load-bearing: without it the token would also
+ * match `From --`, which no export path produces and which widens the match for nothing.
+ */
+function startsWithFromSeparator(bytes, start) {
+    var token = [0x46, 0x72, 0x6F, 0x6D, 0x20, 0x2D, 0x20];   // "From - "
+    if (start + token.length > bytes.length) return false;
+    for (var k = 0; k < token.length; k++) {
+        if (bytes[start + k] !== token[k]) return false;
+    }
+    return true;
+}
+
+/**
+ * Offset of the first byte the structural sniff should test: past an optional UTF-8 BOM,
+ * then past at most ONE mbox From_ separator line. Returns 0 when there is no preamble.
+ *
+ * WHY THE MATCHER IS THE LITERAL `From - ` AND NOT THE GENERAL MBOX FORM. RFC 4155's
+ * From_ line is `From {envelope-sender} {date}`, and matching that generally admits two
+ * inputs that must not be admitted. (a) `From : addr@example.com` is legal RFC 5322
+ * obs-optional-field syntax (§4.5.8, `field-name *WSP ":"`); consumed as preamble, the
+ * next line is tested, the block is accepted, and readFields then splits `From : addr`
+ * at its colon into a field named `from ` WITH A TRAILING SPACE -- which is not `from`,
+ * so the sender is silently lost and the item gets an empty creator. (b) A multi-message
+ * mbox renamed `.eml` would be ACCEPTED, promoting only its first message and discarding
+ * the rest with no code, no summary clause and no log line -- turning today's silent
+ * DECLINE into a silent PARTIAL SUCCESS, which is strictly worse because one item appears
+ * and the user believes it worked.
+ *
+ * An mbox splitter's `From user@host {date}` output is therefore refused -- but VISIBLY,
+ * through the E_SNIFF_FAILED the drop path now raises. That is the trade this bound exists
+ * to make: every residual failure of this predicate is one the user can see.
+ *
+ * AT MOST ONE LINE is skipped, deliberately. An unbounded run would make the sniff no
+ * narrower than the parser, whose own tolerance is unbounded and accidental (a line
+ * without a colon stores nothing), and the whole purpose of this gate is to be the
+ * bounded one of the two.
+ */
+function skipContainerPreamble(bytes) {
+    if (!bytes || bytes.length === 0) return 0;
+    var at = 0;
+    if (bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) at = 3;
+    var i = at;
+    while (i < bytes.length && bytes[i] === 0x3E) i++;   // '>' -- mboxo/mboxrd escape run
+    if (!startsWithFromSeparator(bytes, i)) return at;
+    for (i = at; i < bytes.length; i++) {
+        if (bytes[i] === 0x0A) return i + 1;
+    }
+    return at;
+}
+
+/**
+ * RFC 5322 has no magic number, so the sniff is structural: the first line AT `start`
+ * must be a well-formed header field -- a run of printable ASCII excluding the colon,
+ * then a colon. `%PDF-` fails on the missing colon, which is the discriminator the detect
  * test asserts.
  */
-function looksLikeHeaderBlock(bytes) {
+function looksLikeHeaderBlock(bytes, start) {
     if (!bytes || bytes.length === 0) return false;
-    var limit = bytes.length < 998 ? bytes.length : 998;
-    var i = 0;
+    var from = start || 0;
+    if (from >= bytes.length) return false;
+    var limit = bytes.length - from < 998 ? bytes.length : from + 998;
+    var i = from;
     for (; i < limit; i++) {
         var b = bytes[i];
-        if (b === 0x3A) return i > 0;            // ':' -- and a field name may not be empty
+        if (b === 0x3A) return i > from;         // ':' -- and a field name may not be empty
         if (b === 0x0D || b === 0x0A) return false;
         if (b < 0x21 || b > 0x7E) return false;  // printable ASCII only in a field name
     }
@@ -294,7 +348,7 @@ function readFields(text) {
     // A block with no terminator is aborted rather than parsed. Before this, a truncated
     // or body-less message had its ENTIRE content read as headers with no signal at all,
     // which is a silent wrong answer rather than a missing bound.
-    if (end < 0) throw new Error('E_TOO_LARGE');
+    if (end < 0) throw new Error('E_NO_HEADER_TERMINATOR');
 
     var block = text.slice(0, end);
     // Null-prototype map, not `{}`. Header names are attacker-controlled and commitField
